@@ -1177,10 +1177,13 @@ if st.session_state.active_menu == "navbatchilik":
                 # 1. Asosiy Jadvalga yozish
                 headers = sheet.row_values(1)
                 if date_str not in headers:
-                    sheet.update_cell(1, len(headers) + 1, date_str)
-                    headers = sheet.row_values(1)
-                
-                date_col_idx = headers.index(date_str) + 1
+                    date_col_idx = len(headers) + 1
+                    # Ustunlar sonini tekshirish va kengaytirish
+                    if date_col_idx > sheet.col_count:
+                        sheet.add_cols(10)
+                    sheet.update_cell(1, date_col_idx, date_str)
+                else:
+                    date_col_idx = headers.index(date_str) + 1
                 queue_sheet = get_queue_sheet()
                 # Toshkent vaqti (UTC+5)
                 timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1361,10 +1364,13 @@ if st.session_state.active_menu == "naryad":
                 # 1. Asosiy Jadvalga yozish
                 headers = sheet.row_values(1)
                 if naryad_date_str not in headers:
-                    sheet.update_cell(1, len(headers) + 1, naryad_date_str)
-                    headers = sheet.row_values(1)
-                
-                date_col_idx = headers.index(naryad_date_str) + 1
+                    date_col_idx = len(headers) + 1
+                    # Ustunlar sonini tekshirish va kengaytirish
+                    if date_col_idx > sheet.col_count:
+                        sheet.add_cols(10)
+                    sheet.update_cell(1, date_col_idx, naryad_date_str)
+                else:
+                    date_col_idx = headers.index(naryad_date_str) + 1
                 queue_sheet = get_queue_sheet()
                 # Toshkent vaqti (UTC+5)
                 timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
