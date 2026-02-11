@@ -34,7 +34,7 @@ FLOOR_CONFIG = {
     "3-etaj": {
         "name": "3-etaj (Qizlar)",
         "sheet_name": "TTJ 3-etaj Navbatchilik",
-        "telegram_group": "-1003566186790"
+        "telegram_group": "-1002623014807"
     }
 }
 
