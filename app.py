@@ -360,30 +360,37 @@ st.set_page_config(
 )
 
 # ============================================================================
-# ZAMONAVIY DIZAYN - Glassmorphism + 3D Tugmalar
+# DIZAYN - CLEAN & PROFESSIONAL
 # ============================================================================
 st.markdown("""
 <style>
     :root {
-        --primary: #00D4AA;
-        --primary-dark: #00B894;
-        --accent: #00CEC9;
-        --bg-dark: #0a0a0a;
-        --glass: rgba(255, 255, 255, 0.05);
-        --glass-border: rgba(0, 212, 170, 0.3);
-        --text: #ffffff;
+        --primary: #4FC3F7;
+        --bg-dark: #0E1117;
+        --card-bg: #1A1C23;
+        --border: rgba(255, 255, 255, 0.1);
     }
-    .stApp { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%); }
-    .stButton > button {
-        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
-        border-radius: 12px !important;
-        color: #0a0a0a !important;
-        font-weight: 700 !important;
-        box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
-        transition: all 0.2s ease !important;
+    .stApp { background-color: var(--bg-dark); }
+    
+    /* Custom Header */
+    .header-container {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 15px;
+        padding: 20px;
+        margin-bottom: 25px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
-    .stButton > button:hover { transform: translateY(-3px) !important; box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5); }
-    /* Hide Streamlit branding */
+    
+    .section-divider {
+        height: 1px;
+        background: var(--border);
+        margin: 20px 0;
+    }
+    
+    /* Hide Streamlit elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -498,226 +505,48 @@ current_config = get_current_config()
 floor_name = current_config.get("name", "4-etaj")
 
 st.markdown(f"""
-<div style="background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);">
+<div class="header-container">
     <div>
-        <h1 style="margin: 0; font-size: 28px; font-weight: 800; background: linear-gradient(145deg, #ffffff, #00D4AA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
-        <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
+        <h2 style="margin: 0; color: white;">🏢 Navbatchilik Tizimi</h2>
+        <p style="margin: 0; color: #888; font-size: 14px;">TTJ Boshqaruv Paneli</p>
     </div>
-    <div style="display: flex; gap: 15px; align-items: center;">
-        <div style="background: linear-gradient(145deg, #00D4AA, #00B894); padding: 12px 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);">
-            <span style="color: #0a0a0a; font-weight: 700; font-size: 16px;">📍 {floor_name}</span>
+    <div style="display: flex; align-items: center; gap: 20px;">
+        <div style="background: rgba(79, 195, 247, 0.1); padding: 8px 15px; border-radius: 10px; border: 1px solid var(--primary);">
+            <span style="color: var(--primary); font-weight: bold;">📍 {floor_name}</span>
         </div>
-        <a href="?action=logout" target="_self" style="text-decoration: none;">
-            <div style="background: rgba(255, 87, 51, 0.15); border: 1px solid rgba(255, 87, 51, 0.4); color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <span>🚪</span><span>CHIQISH</span>
-            </div>
+        <a href="?action=logout" target="_self" style="color: #ff5733; text-decoration: none; font-weight: bold; border: 1px solid rgba(255, 87, 51, 0.3); padding: 8px 15px; border-radius: 10px;">
+            🚪 CHIQISH
         </a>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ============================================================================
-# 3D KARTALAR BILAN MENYU
-# ============================================================================
+# --- NAVIGATSIYA ---
+auth_params = f"auth={st.query_params.get('auth', '')}&floor={st.query_params.get('floor', '')}&role={st.query_params.get('role', '')}"
 
-# Menyu kartalar uchun CSS
-st.markdown("""
-<style>
-    /* ===== 3D MENYU KARTALARI ===== */
-    .menu-container {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 20px;
-        margin: 30px 0;
-        perspective: 1000px;
-    }
-    
-    @media (max-width: 768px) {
-        .menu-container {
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-        }
-    }
-    
-    .menu-card {
-        background: linear-gradient(145deg, rgba(17, 17, 17, 0.9), rgba(30, 30, 30, 0.8));
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(0, 212, 170, 0.2);
-        border-radius: 20px;
-        padding: 30px 20px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        transform-style: preserve-3d;
-        box-shadow: 
-            0 10px 30px rgba(0, 0, 0, 0.3),
-            0 5px 15px rgba(0, 212, 170, 0.1),
-            inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .menu-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(
-            90deg,
-            transparent,
-            rgba(0, 212, 170, 0.2),
-            transparent
-        );
-        transition: left 0.5s;
-    }
-    
-    .menu-card:hover::before {
-        left: 100%;
-    }
-    
-    .menu-card:hover {
-        transform: translateY(-15px) rotateX(10deg) scale(1.02);
-        border-color: rgba(0, 212, 170, 0.6);
-        box-shadow: 
-            0 25px 50px rgba(0, 0, 0, 0.4),
-            0 15px 30px rgba(0, 212, 170, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.2);
-    }
-    
-    .menu-card.active {
-        background: linear-gradient(145deg, rgba(0, 212, 170, 0.2), rgba(0, 206, 201, 0.15));
-        border-color: rgba(0, 212, 170, 0.8);
-        transform: translateY(-8px);
-        box-shadow: 
-            0 20px 40px rgba(0, 212, 170, 0.25),
-            0 10px 20px rgba(0, 0, 0, 0.3),
-            inset 0 0 30px rgba(0, 212, 170, 0.1);
-    }
-    
-    .menu-icon {
-        font-size: 48px;
-        margin-bottom: 15px;
-        display: block;
-        transform: translateZ(30px);
-        transition: transform 0.3s ease;
-    }
-    
-    .menu-card:hover .menu-icon {
-        transform: translateZ(50px) scale(1.2);
-    }
-    
-    .menu-title {
-        color: #ffffff;
-        font-size: 18px;
-        font-weight: 700;
-        margin: 0;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .menu-card.active .menu-title {
-        background: linear-gradient(145deg, #00D4AA, #00CEC9);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    .menu-desc {
-        color: #888;
-        font-size: 12px;
-        margin-top: 8px;
-    }
-    
-    .menu-badge {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: linear-gradient(145deg, #00D4AA, #00B894);
-        color: #0a0a0a;
-        font-size: 11px;
-        font-weight: 700;
-        padding: 4px 10px;
-        border-radius: 20px;
-        box-shadow: 0 3px 10px rgba(0, 212, 170, 0.4);
-    }
-    
-    /* Glow Effect for Active Card */
-    .menu-card.active::after {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(
-            circle at center,
-            rgba(0, 212, 170, 0.1) 0%,
-            transparent 50%
-        );
-        animation: glow-pulse 3s infinite;
-        pointer-events: none;
-    }
-    
-    @keyframes glow-pulse {
-        0%, 100% { opacity: 0.5; transform: scale(1); }
-        50% { opacity: 1; transform: scale(1.1); }
-    }
-    
-    /* Section Divider */
-    .section-divider {
-        height: 2px;
-        background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.5), transparent);
-        margin: 30px 0;
-        border-radius: 2px;
-    }
-</style>
-""", unsafe_allow_html=True)
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    if st.button("📝 Navbatchilik", use_container_width=True, 
+                 type="primary" if st.session_state.active_menu == "navbatchilik" else "secondary"):
+        st.session_state.active_menu = "navbatchilik"
+        st.rerun()
+with col2:
+    if st.button("🛠️ Naryad", use_container_width=True,
+                 type="primary" if st.session_state.active_menu == "naryad" else "secondary"):
+        st.session_state.active_menu = "naryad"
+        st.rerun()
+with col3:
+    if st.button("📊 Statistika", use_container_width=True,
+                 type="primary" if st.session_state.active_menu == "statistika" else "secondary"):
+        st.session_state.active_menu = "statistika"
+        st.rerun()
+with col4:
+    if st.button("📨 Xabarlar", use_container_width=True,
+                 type="primary" if st.session_state.active_menu == "xabarlar" else "secondary"):
+        st.session_state.active_menu = "xabarlar"
+        st.rerun()
 
-# Session state'da active menyu
-if "active_menu" not in st.session_state:
-    st.session_state.active_menu = "navbatchilik"
-
-# Query param orqali menyuni aniqlash
-if "menu" in st.query_params:
-    st.session_state.active_menu = st.query_params["menu"]
-
-# 3D MENYU KARTALARI
-st.markdown(f"""
-<div class="menu-container">
-    <a href="?menu=navbatchilik" target="_self" style="text-decoration: none;">
-        <div class="menu-card {'active' if st.session_state.active_menu == 'navbatchilik' else ''}">
-            <span class="menu-icon">📝</span>
-            <p class="menu-title">Navbatchilik</p>
-            <p class="menu-desc">Kunlik navbatchilar</p>
-        </div>
-    </a>
-    <a href="?menu=naryad" target="_self" style="text-decoration: none;">
-        <div class="menu-card {'active' if st.session_state.active_menu == 'naryad' else ''}">
-            <span class="menu-icon">🛠️</span>
-            <p class="menu-title">Naryad</p>
-            <p class="menu-desc">Jazo va qo'shimcha</p>
-        </div>
-    </a>
-    <a href="?menu=statistika" target="_self" style="text-decoration: none;">
-        <div class="menu-card {'active' if st.session_state.active_menu == 'statistika' else ''}">
-            <span class="menu-icon">📊</span>
-            <p class="menu-title">Statistika</p>
-            <p class="menu-desc">Umumiy hisobotlar</p>
-        </div>
-    </a>
-    <a href="?menu=xabarlar" target="_self" style="text-decoration: none;">
-        <div class="menu-card {'active' if st.session_state.active_menu == 'xabarlar' else ''}">
-            <span class="menu-icon">📨</span>
-            <p class="menu-title">Xabarlar</p>
-            <p class="menu-desc">SMS yuborish</p>
-        </div>
-    </a>
-</div>
-<div class="section-divider"></div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 # --- NAVBATCHILIK SAHIFASI ---
 if st.session_state.active_menu == "navbatchilik":
