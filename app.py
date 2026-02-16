@@ -1081,13 +1081,15 @@ if st.session_state.get("is_admin", False):
                             
                             # Header va ma'lumotlarni birlashtirish
                             new_data = [edited_settings.columns.tolist()] + edited_settings.astype(str).values.tolist()
-                            settings_ws.update(values=new_data)
                             
-                            st.success("✅ Sozlamalar yangilandi!")
+                            # Explicit range 'A1' ishlatamiz yangi versiyalar uchun
+                            settings_ws.update('A1', new_data)
+                            
+                            st.success("✅ Sozlamalar muvaffaqiyatli saqlandi!")
                             st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Saqlashda xatolik: {e}")
+                            st.error(f"Saqlashda xatoga yo'l qo'yildi: {e}")
             else:
                 st.warning("Sozlamalar bo'sh yoki o'qib bo'lmadi.")
 
@@ -2067,7 +2069,9 @@ if st.session_state.active_menu == "statistika":
     st.markdown("---")
     st.subheader("🔍 Talabani Qidirish")
     
-    search_student_options = sorted(df.apply(lambda x: f"{x['ism familiya']} ({x['xona']})", axis=1).tolist())
+    # Ismdan indexga mapping (Saralashda adashmaslik uchun)
+    search_display_to_idx = {f"{row['ism familiya']} ({row['xona']})": idx for idx, row in df.iterrows()}
+    search_student_options = sorted(search_display_to_idx.keys())
     
     # Session state
     if "show_student_details" not in st.session_state:
@@ -2094,9 +2098,9 @@ if st.session_state.active_menu == "statistika":
     if st.session_state.show_student_details and st.session_state.selected_student_name and date_cols:
         selected_search = st.session_state.selected_student_name
         
-        # Tanlangan talabani topish
-        search_idx = search_student_options.index(selected_search)
-        student_row = df.iloc[search_idx]
+        # Tanlangan talabani topish (TO'G'RI INDEX BILAN)
+        search_idx = search_display_to_idx[selected_search]
+        student_row = df.loc[search_idx]
         student_name = student_row['ism familiya']
         student_xona = student_row['xona']
         
