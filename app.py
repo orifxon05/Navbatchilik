@@ -360,43 +360,75 @@ st.set_page_config(
 )
 
 # ============================================================================
-# DIZAYN - CLEAN & PROFESSIONAL
+# PREMIUM DIZAYN - Glassmorphism + 3D Effects
 # ============================================================================
 st.markdown("""
 <style>
     :root {
-        --primary: #4FC3F7;
-        --bg-dark: #0E1117;
-        --card-bg: #1A1C23;
-        --border: rgba(255, 255, 255, 0.1);
+        --primary: #00D4AA;
+        --primary-dark: #00B894;
+        --accent: #00CEC9;
+        --bg-dark: #0a0a0a;
+        --glass: rgba(255, 255, 255, 0.05);
+        --glass-border: rgba(0, 212, 170, 0.3);
+        --text: #ffffff;
     }
-    .stApp { background-color: var(--bg-dark); }
+    .stApp { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%); }
     
-    /* Custom Header */
-    .header-container {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 15px;
-        padding: 20px;
-        margin-bottom: 25px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .section-divider {
-        height: 1px;
-        background: var(--border);
-        margin: 20px 0;
+    /* Glass Cards */
+    .glass-card {
+        background: var(--glass);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
+        border-radius: 20px;
+        padding: 25px;
+        margin: 10px 0;
+        box-shadow: 0 8px 32px rgba(0, 212, 170, 0.1);
     }
     
-    /* Hide Streamlit elements */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+    /* 3D Buttons */
+    .stButton > button {
+        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
+        border: none !important;
+        border-radius: 12px !important;
+        color: #0a0a0a !important;
+        font-weight: 700 !important;
+        box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
+        transition: all 0.2s ease !important;
+    }
+    .stButton > button:hover { transform: translateY(-3px) !important; box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5); }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { background: var(--glass); border-radius: 15px; padding: 5px; gap: 5px; border: 1px solid var(--glass-border); }
+    .stTabs [aria-selected="true"] { background: linear-gradient(145deg, #00D4AA, #00B894) !important; color: #0a0a0a !important; border-radius: 10px; }
+    
+    /* Menu Cards */
+    .menu-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 30px 0; perspective: 1000px; }
+    @media (max-width: 768px) { .menu-container { grid-template-columns: repeat(2, 1fr); gap: 15px; } }
+    .menu-card {
+        background: linear-gradient(145deg, rgba(17, 17, 17, 0.9), rgba(30, 30, 30, 0.8));
+        backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 20px;
+        padding: 30px 20px; text-align: center; cursor: pointer; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        transform-style: preserve-3d; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+    .menu-card:hover { transform: translateY(-10px) rotateX(5deg); border-color: var(--primary); }
+    .menu-card.active { background: rgba(0, 212, 170, 0.2); border-color: var(--primary); box-shadow: 0 15px 35px rgba(0, 212, 170, 0.3); }
+    .menu-title { color: white; font-size: 16px; font-weight: bold; margin-top: 10px; }
+    .section-divider { height: 2px; background: linear-gradient(90deg, transparent, var(--primary), transparent); margin: 30px 0; }
+    
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     [data-testid="stHeader"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# Session state'da active menyu
+if "active_menu" not in st.session_state:
+    st.session_state.active_menu = "navbatchilik"
+
+# Query param orqali menyuni aniqlash
+if "menu" in st.query_params:
+    st.session_state.active_menu = st.query_params["menu"]
 
 # Check Logout Action
 if st.query_params.get("action") == "logout":
@@ -500,83 +532,152 @@ except Exception as e:
     st.error(f"❌ Google Sheetga ulanishda xatolik: {e}")
     st.stop()
 
-# --- HEADER ---
+# ============================================================================
+# ADMIN PANEL - app_v3.py FUNKSIONALIGI
+# ============================================================================
+if st.session_state.get("is_admin", False):
+    # Admin Header
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, rgba(255, 87, 51, 0.1) 0%, rgba(251, 133, 0, 0.1) 100%); border-radius: 15px; padding: 25px; border: 1px solid rgba(255, 87, 51, 0.3); margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(255, 87, 51, 0.1);">
+        <div>
+            <h2 style="color: #FF5733; margin: 0;">🔧 ADMIN PANEL</h2>
+            <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">Tizim va Ma'lumotlar Boshqaruvi</p>
+        </div>
+        <a href="?action=logout" target="_self" style="text-decoration: none; background: rgba(255, 87, 51, 0.15); border: 1px solid #ff5733; color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: bold;">🚪 CHIQISH</a>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Qavatlarni Switcher (Tizimni ko'rish)
+    with st.expander("👁️ Foydalanuvchi ko'rinishiga o'tish (Saytni ko'rish)"):
+        f_cols = st.columns(len(FLOOR_CONFIG))
+        for i, (f_id, f_conf) in enumerate(FLOOR_CONFIG.items()):
+            with f_cols[i % 4]:
+                if st.button(f"🏠 {f_conf['name']}", key=f"admin_nav_to_{f_id}", use_container_width=True):
+                    st.session_state["is_admin"] = False
+                    st.session_state["current_floor"] = f_id
+                    st.query_params.update({"auth": "ok", "floor": f_id, "role": "user", "view_mode": "user"})
+                    st.rerun()
+
+    init_settings_sheet()
+    tab1, tab2, tab3 = st.tabs(["🏢 QAVATLAR SOZLAMALARI", "📤 TALABALAR YUKLASH", "📝 MA'LUMOTLARNI TAHRIRLASH"])
+    
+    with tab1:
+        st.subheader("⚙️ Qavat Sozlamalari")
+        st.info("Bu yerda qavat nomlari, parollar va Sheet nomlarini o'zgartirishingiz mumkin.")
+        try:
+            client = get_client()
+            settings_ws = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
+            data = settings_ws.get_all_values()
+            if len(data) > 0:
+                header = data[0]
+                rows = data[1:]
+                df_settings = pd.DataFrame(rows, columns=header)
+                edited_settings = st.data_editor(df_settings, num_rows="dynamic", use_container_width=True, key="admin_settings_editor")
+                if st.button("💾 Sozlamalarni Saqlash", type="primary"):
+                    settings_ws.clear()
+                    new_values = [edited_settings.columns.tolist()] + edited_settings.astype(str).values.tolist()
+                    settings_ws.update(values=new_values)
+                    st.success("✅ Sozlamalar muvaffaqiyatli yangilandi!")
+                    st.cache_data.clear()
+                    st.rerun()
+        except Exception as e: st.error(f"Xatolik: {e}")
+
+    with tab2:
+        st.subheader("📤 Excel Fayl Yuklash")
+        target_f_id = st.selectbox("Qaysi qavatga yuklaymiz?", list(FLOOR_CONFIG.keys()), format_func=lambda x: FLOOR_CONFIG[x]["name"])
+        up_file = st.file_uploader("Faylni tanlang (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
+        if up_file and target_f_id:
+            df_up = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+            st.write("Dastlabki 5 qator:", df_up.head())
+            if st.button("🚀 Bazaga Yozish"):
+                try:
+                    target_sh_name = FLOOR_CONFIG[target_f_id].get("sheet_name", GOOGLE_SHEET_NAME)
+                    sh_target = get_or_create_spreadsheet(target_sh_name)
+                    sh_target.sheet1.append_rows(df_up.fillna("").astype(str).values.tolist())
+                    st.success(f"✅ {len(df_up)} ta talaba qo'shildi!")
+                    log_activity("Excel yuklash", f"{target_sh_name} ga {len(df_up)} ta talaba")
+                except Exception as e: st.error(f"Xatolik: {e}")
+
+    with tab3:
+        st.subheader("📝 Talabalar Ma'lumotlarini Tahrirlash")
+        edit_f_id = st.selectbox("Qavatni tanlang", list(FLOOR_CONFIG.keys()), format_func=lambda x: FLOOR_CONFIG[x]["name"], key="edit_f_select")
+        if st.button("🔄 Ma'lumotlarni Yuklash"):
+            try:
+                sh_edit = get_or_create_spreadsheet(FLOOR_CONFIG[edit_f_id]["sheet_name"])
+                st.session_state["admin_edit_data"] = sh_edit.sheet1.get_all_values()
+            except Exception as e: st.error(f"Xatolik: {e}")
+        
+        if "admin_edit_data" in st.session_state and st.session_state["admin_edit_data"]:
+            edit_v = st.session_state["admin_edit_data"]
+            df_admin_edit = pd.DataFrame(edit_v[1:], columns=edit_v[0])
+            edited_admin_df = st.data_editor(df_admin_edit, num_rows="dynamic", use_container_width=True)
+            if st.button("💾 O'zgartirishlarni Saqlash", type="primary", key="save_admin_edit"):
+                try:
+                    ws_edit = get_or_create_spreadsheet(FLOOR_CONFIG[edit_f_id]["sheet_name"]).sheet1
+                    ws_edit.clear()
+                    ws_edit.update(values=[edited_admin_df.columns.tolist()] + edited_admin_df.fillna("").astype(str).values.tolist())
+                    st.success("✅ Ma'lumotlar muvaffaqiyatli saqlandi!")
+                    st.cache_data.clear()
+                except Exception as e: st.error(f"Xatolik: {e}")
+
+    if st.query_params.get("view_mode") != "user":
+        st.stop()
+
+# --- HEADER (User View) ---
 current_config = get_current_config()
 floor_name = current_config.get("name", "4-etaj")
-
 st.markdown(f"""
-<div class="header-container">
+<div style="background: var(--glass); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);">
     <div>
-        <h2 style="margin: 0; color: white;">🏢 Navbatchilik Tizimi</h2>
-        <p style="margin: 0; color: #888; font-size: 14px;">TTJ Boshqaruv Paneli</p>
+        <h1 style="margin: 0; font-size: 28px; background: linear-gradient(145deg, #ffffff, var(--primary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
+        <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
     </div>
-    <div style="display: flex; align-items: center; gap: 20px;">
-        <div style="background: rgba(79, 195, 247, 0.1); padding: 8px 15px; border-radius: 10px; border: 1px solid var(--primary);">
-            <span style="color: var(--primary); font-weight: bold;">📍 {floor_name}</span>
+    <div style="display: flex; gap: 15px; align-items: center;">
+        <div style="background: var(--primary); padding: 10px 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4); color: #0a0a0a; font-weight: bold;">
+            📍 {floor_name}
         </div>
-        <a href="?action=logout" target="_self" style="color: #ff5733; text-decoration: none; font-weight: bold; border: 1px solid rgba(255, 87, 51, 0.3); padding: 8px 15px; border-radius: 10px;">
-            🚪 CHIQISH
+        <a href="?action=logout" target="_self" style="text-decoration: none; background: rgba(255, 87, 51, 0.1); border: 1px solid #ff5733; color: #ff5733; padding: 10px 20px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px;">
+            <span>🚪 CHIQISH</span>
         </a>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# Session state'da active menyu
-if "active_menu" not in st.session_state:
-    st.session_state.active_menu = "navbatchilik"
+# --- 3D MENU CARDS ---
+a_val = st.query_params.get("auth", "")
+f_val = st.query_params.get("floor", "")
+r_val = st.query_params.get("role", "")
+p_str = f"auth={a_val}&floor={f_val}&role={r_val}"
 
-# Query param orqali menyuni aniqlash
-if "menu" in st.query_params:
-    st.session_state.active_menu = st.query_params["menu"]
-
-# Admin uchun qavat tanlash imkoniyati
-if st.session_state.get("is_admin", False):
-    with st.sidebar:
-        st.markdown("### 🏢 Boshqaruv Paneli")
-        st.info("Siz adminsiz! Barcha qavatlarni ko'ra olasiz.")
-        
-        floor_options = list(FLOOR_CONFIG.keys())
-        current_f = st.session_state.get("current_floor", "admin")
-        
-        # Agar current_floor "admin" bo'lsa, uni birinchi floorga o'tkazamiz (tanlash uchun)
-        if current_f == "admin" and floor_options:
-            current_f = floor_options[0]
-            st.session_state.current_floor = current_f
-            
-        selected_floor = st.selectbox(
-            "Qavatni tanlang", 
-            options=floor_options,
-            index=floor_options.index(current_f) if current_f in floor_options else 0
-        )
-        
-        if selected_floor != st.session_state.get("current_floor"):
-            st.session_state.current_floor = selected_floor
-            st.rerun()
-
-# --- NAVIGATSIYA ---
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    if st.button("📝 Navbatchilik", use_container_width=True, 
-                 type="primary" if st.session_state.active_menu == "navbatchilik" else "secondary"):
-        st.session_state.active_menu = "navbatchilik"
-        st.rerun()
-with col2:
-    if st.button("🛠️ Naryad", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "naryad" else "secondary"):
-        st.session_state.active_menu = "naryad"
-        st.rerun()
-with col3:
-    if st.button("📊 Statistika", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "statistika" else "secondary"):
-        st.session_state.active_menu = "statistika"
-        st.rerun()
-with col4:
-    if st.button("📨 Xabarlar", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "xabarlar" else "secondary"):
-        st.session_state.active_menu = "xabarlar"
-        st.rerun()
-
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.markdown(f"""
+<div class="menu-container">
+    <a href="?menu=navbatchilik&{p_str}" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'navbatchilik' else ''}">
+            <span style="font-size: 48px;">📝</span>
+            <div class="menu-title">Navbatchilik</div>
+        </div>
+    </a>
+    <a href="?menu=naryad&{p_str}" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'naryad' else ''}">
+            <span style="font-size: 48px;">🛠️</span>
+            <div class="menu-title">Naryad</div>
+        </div>
+    </a>
+    <a href="?menu=statistika&{p_str}" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'statistika' else ''}">
+            <span style="font-size: 48px;">📊</span>
+            <div class="menu-title">Statistika</div>
+        </div>
+    </a>
+    <a href="?menu=xabarlar&{p_str}" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'xabarlar' else ''}">
+            <span style="font-size: 48px;">📨</span>
+            <div class="menu-title">Xabarlar</div>
+        </div>
+    </a>
+</div>
+<div class="section-divider"></div>
+""", unsafe_allow_html=True)
 
 # --- NAVBATCHILIK SAHIFASI ---
 if st.session_state.active_menu == "navbatchilik":
