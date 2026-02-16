@@ -50,7 +50,7 @@ ADMIN_CHAT_ID = "7693191223"
 SETTINGS_SHEET_NAME = "Navbatchilik_Jadvali"  # SETTINGS sahifasi shu Sheet'da
 SETTINGS_WORKSHEET = "SETTINGS"  # Worksheet nomi
 
-@st.cache_data(ttl=1)  # 1 sekund kesh (Deyarli keshlamaydi, o'zgarishlar darhol ko'rinadi)
+@st.cache_data(ttl=600)  # 10 daqiqa kesh (Kvota tejash uchun)
 def load_floor_config():
     """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash"""
     try:
@@ -192,6 +192,15 @@ def get_or_create_spreadsheet(sheet_name):
             st.caption("Fayl nomini to'g'ri yozganingizga ishonch hosil qiling (katta-kichik harflar bir xil bo'lishi kerak).")
             st.stop()
             # raise Exception(f"Yangi baza yaratishda xatolik: {create_error}")
+
+@st.cache_data(ttl=300) # 5 daqiqa kesh
+def load_full_data(sheet_name):
+    """Barcha ma'lumotlarni keshlab o'qish"""
+    try:
+        sh = get_or_create_spreadsheet(sheet_name)
+        return sh.sheet1.get_all_values()
+    except Exception as e:
+        raise e
 
 def get_main_sheet():
     sheet_name = get_sheet_name()
@@ -1286,10 +1295,9 @@ with st.sidebar:
 
 # --- MA'LUMOTNI O'QISH ---
 try:
-    sheet = get_main_sheet()
-    
-    # get_all_records() o'rniga get_all_values() ishlatamiz (duplicate header muammosi uchun)
-    all_values = sheet.get_all_values()
+    # Keshlab o'qish (sheet_name o'zgarmasa keshdan oladi)
+    s_name = get_sheet_name()
+    all_values = load_full_data(s_name)
     
     if not all_values:
         st.error("Jadval bo'sh!")
@@ -1660,6 +1668,7 @@ if st.session_state.active_menu == "navbatchilik":
                 send_to_ttj_group(group_msg)
 
                 st.success("✅ Muvaffaqiyatli saqlandi! SMSlar navbatga qo'shildi. Telefoningiz internetga ulanganda ular avtomatik ketadi.")
+                st.cache_data.clear()
                 st.rerun()
                 
             except Exception as e:
@@ -1839,6 +1848,7 @@ if st.session_state.active_menu == "naryad":
                 send_to_ttj_group(naryad_group_msg)
 
                 st.success("✅ Muvaffaqiyatli saqlandi! SMSlar navbatga qo'shildi. Telefoningiz internetga ulanganda ular avtomatik ketadi.")
+                st.cache_data.clear()
                 st.rerun()
                 
             except Exception as e:
