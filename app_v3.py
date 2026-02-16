@@ -50,7 +50,7 @@ ADMIN_CHAT_ID = "7693191223"
 SETTINGS_SHEET_NAME = "Navbatchilik_Jadvali"  # SETTINGS sahifasi shu Sheet'da
 SETTINGS_WORKSHEET = "SETTINGS"  # Worksheet nomi
 
-@st.cache_data(ttl=300)  # 5 daqiqa kesh
+@st.cache_data(ttl=1)  # 1 sekund kesh (Deyarli keshlamaydi, o'zgarishlar darhol ko'rinadi)
 def load_floor_config():
     """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash"""
     try:
@@ -152,6 +152,97 @@ def send_to_ttj_group(message):
         }, timeout=5)
     except:
         pass
+
+# ============================================================================
+# HELPER FUNCTIONS (Sheet & Data)
+# ============================================================================
+
+def get_sheet_name():
+    """Joriy etajning Google Sheet nomini olish"""
+    config = get_current_config()
+    return config.get("sheet_name", GOOGLE_SHEET_NAME)
+
+def get_or_create_spreadsheet(sheet_name):
+    """Faylni ochish yoki topilmasa avtomatik yaratish"""
+    client = get_client()
+    try:
+        return client.open(sheet_name)
+    except gspread.exceptions.SpreadsheetNotFound:
+        try:
+            # Yangi Spreadsheet yaratish
+            sh = client.create(sheet_name)
+            ws = sh.sheet1
+            headers = ["Ism", "Familiya", "Xona raqami", "Telefon raqami", "Telegram ID"]
+            ws.append_row(headers)
+            
+            # Xabar yuborish
+            send_telegram_alert(f"🆕 YANGI BAZA YARATILDI!\n\n🏢 Qavat: {sheet_name}\n📂 Fayl Google Drive'da avtomatik ochildi.")
+            return sh
+        except Exception as create_error:
+            # Agar yaratishda xatolik bo'lsa (masalan Quota Exceeded), demak fayl yo'q va biz yarata olmadik.
+            # Foydalanuvchiga aniq yechimni ko'rsatamiz.
+            sa_email = "bot-user@ornate-course-481512-n2.iam.gserviceaccount.com"
+            
+            st.error(f"❌ XATOLIK: '{sheet_name}' fayli topilmadi!")
+            st.warning("⚠️ Bot yangi fayl yaratmoqchi bo'ldi, lekin Google Drive xotirangiz to'lgan (Quota Exceeded).")
+            
+            st.info(f"✅ YECHIM: Iltimos, Google Drive'da '{sheet_name}' nomli Excel fayl yarating va unga quyidagi emailni 'Editor' qilib qo'shing:")
+            st.code(sa_email, language="text")
+            
+            st.caption("Fayl nomini to'g'ri yozganingizga ishonch hosil qiling (katta-kichik harflar bir xil bo'lishi kerak).")
+            st.stop()
+            # raise Exception(f"Yangi baza yaratishda xatolik: {create_error}")
+
+def get_main_sheet():
+    sheet_name = get_sheet_name()
+    sh = get_or_create_spreadsheet(sheet_name)
+    return sh.sheet1
+
+def get_queue_sheet():
+    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
+    client = get_client()
+    # Joriy etajning Sheet nomini olish
+    current_floor = get_current_floor()
+    # Agar current_floor bo'lmasa yoki config bo'sh bo'lsa default
+    try:
+        sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
+    except:
+        sheet_name = GOOGLE_SHEET_NAME
+
+    try:
+        return client.open(sheet_name).worksheet("SMS_QUEUE")
+    except:
+        # SMS_QUEUE sahifasi yo'q bo'lsa, yaratish
+        try:
+            ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
+            ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
+            return ws
+        except:
+             return None # Agar yaratib bo'lmasa
+
+def validate_phone(phone):
+    """Telefon raqamini tekshirish va tozalash"""
+    if not phone:
+        return None
+    phone = str(phone).replace("+", "").replace(" ", "").replace("-", "")
+    phone = phone.replace("(", "").replace(")", "").replace(".0", "")
+    phone = ''.join(filter(str.isdigit, phone))
+    if len(phone) < 9:
+        return None
+    if len(phone) == 9:
+        phone = "998" + phone
+    return phone
+
+def add_to_sms_queue(queue_sheet, phone, message, student_name=""):
+    """SMS navbatiga xavfsiz qo'shish"""
+    if not queue_sheet: return False
+    
+    clean_phone = validate_phone(phone)
+    if not clean_phone:
+        return False
+    timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+    queue_sheet.append_row([clean_phone, message, "PENDING", timestamp, student_name])
+    return True
 
 # ============================================================================
 # XAVFSIZLIK TIZIMI / SECURITY SYSTEM
@@ -725,17 +816,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Check Logout Action
+if st.query_params.get("action") == "logout":
+    st.session_state.clear()
+    st.query_params.clear()
+    st.rerun()
+
 def check_password():
     """Returns `True` if the user had the correct password."""
     
-    # Query params orqali sessiyani saqlash
-    if "auth" in st.query_params:
-        if st.query_params["auth"] == "ok":
-            st.session_state["password_correct"] = True
-            # Floor ni ham tiklash
-            if "floor" in st.query_params:
-                st.session_state["current_floor"] = st.query_params["floor"]
-            return True
+    # URL orqali sessiyani tiklash (Refresh bo'lganda joyida qolish uchun)
+    if st.query_params.get("auth") == "ok":
+        st.session_state["password_correct"] = True
+        
+        # Rol va qavatni tiklash
+        floor = st.query_params.get("floor")
+        role = st.query_params.get("role")
+        
+        if role == "admin":
+            st.session_state["is_admin"] = True
+            st.session_state["current_floor"] = "admin"
+        elif floor:
+            st.session_state["is_admin"] = False
+            st.session_state["current_floor"] = floor
+            
+        return True
+    
 
     if st.session_state.get("password_correct", False):
         return True
@@ -852,8 +958,10 @@ def check_password():
                 st.session_state["password_correct"] = True
                 st.session_state["is_admin"] = True
                 st.session_state["current_floor"] = "admin"
+                # URL ga to'g'ri ma'lumot yozish
                 st.query_params["auth"] = "ok"
                 st.query_params["floor"] = "admin"
+                st.query_params["role"] = "admin"
                 send_telegram_alert("🔧 ADMIN PANEL'ga kirish!")
                 st.rerun()
 
@@ -870,8 +978,10 @@ def check_password():
                 st.session_state["password_correct"] = True
                 st.session_state["is_admin"] = False
                 st.session_state["current_floor"] = found_floor
+                # URL ga to'g'ri ma'lumot yozish
                 st.query_params["auth"] = "ok"
                 st.query_params["floor"] = found_floor
+                st.query_params["role"] = "user"
                 send_successful_login_alert()
                 st.rerun()
             else:
@@ -888,75 +998,98 @@ if not check_password():
 # ADMIN PANEL
 # ============================================================================
 if st.session_state.get("is_admin", False):
-    st.markdown("""
-    <div style="
-        background: linear-gradient(135deg, rgba(255, 87, 51, 0.1) 0%, rgba(251, 133, 0, 0.1) 100%);
-        backdrop-filter: blur(20px);
-        border: 2px solid rgba(255, 87, 51, 0.5);
-        border-radius: 20px;
-        padding: 30px;
-        margin-bottom: 30px;
-        text-align: center;
-    ">
-        <h1 style="color: #FF5733; margin: 0;">🔧 ADMIN PANEL</h1>
-        <p style="color: #aaa; margin-top: 10px;">Tizim sozlamalari va ma'lumotlar boshqaruvi</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # --- HEADER & NAVIGATION ---
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(255, 87, 51, 0.1) 0%, rgba(251, 133, 0, 0.1) 100%);
+            border-radius: 15px;
+            padding: 15px 25px;
+            border: 1px solid rgba(255, 87, 51, 0.3);
+        ">
+            <h2 style="color: #FF5733; margin: 0;">🔧 ADMIN PANEL</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.write("") # Spacing
+        if st.button("🚪 Tizimdan Chiqish", type="secondary", use_container_width=True):
+            st.session_state.clear()
+            st.query_params.clear()
+            st.rerun()
+            
+    # Qavatlarga o'tish
+    with st.expander("👁️ Qavat ko'rinishiga o'tish (Saytni ko'rish)"):
+        f_cols = st.columns(len(FLOOR_CONFIG))
+        for i, (f_id, f_conf) in enumerate(FLOOR_CONFIG.items()):
+            c_idx = i % 4 # Max 4 columns
+            with f_cols[c_idx]:
+                if st.button(f"🏠 {f_conf['name']}", key=f"nav_to_{f_id}", use_container_width=True):
+                    st.session_state["is_admin"] = False
+                    st.session_state["current_floor"] = f_id
+                    
+                    # URL parametrlarini yangilash (Parolsiz kirish uchun)
+                    st.query_params["auth"] = "ok"
+                    st.query_params["floor"] = f_id
+                    st.query_params["role"] = "user"
+                    
+                    st.rerun()
+    
+    st.write("---")
     
     # Initialize Settings Sheet just in case
     init_settings_sheet()
     
-    tab1, tab2 = st.tabs(["🏢 QAVATLAR SOZLAMALARI", "📤 TALABALAR YUKLASH"])
+    tab1, tab2, tab3 = st.tabs(["🏢 QAVATLAR SOZLAMALARI", "📤 TALABALAR YUKLASH", "📝 MA'LUMOTLARNI TAHRIRLASH"])
     
     with tab1:
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            st.subheader("⚙️ Qavat Sozlamalari")
+        with col_t2:
+            if st.button("🔄 Yangilash (Cache Clear)", help="Agar o'zgarishlar ko'rinmasa, shu tugmani bosing"):
+                st.cache_data.clear()
+                st.rerun()
         st.subheader("⚙️ Qavatlar Konfiguratsiyasi")
+        st.info("Jadval ichidagi ma'lumotlarni o'zgartirib, pastdagi 'Saqlash' tugmasini bosing.")
         
         # Load current settings from sheet
         try:
             client = get_client()
             settings_ws = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
-            data = settings_ws.get_all_records()
-            df_settings = pd.DataFrame(data)
+            data = settings_ws.get_all_values() # get_all_records o'rniga values ishlatamiz xavfsizlik uchun
             
-            st.dataframe(df_settings, use_container_width=True)
-            
-            with st.expander("➕ Yangi Qavat Qo'shish"):
-                with st.form("add_floor_form"):
-                    st.warning("Diqqat: ID unikal bo'lishi shart!")
-                    new_id = st.text_input("ID (masalan: 5-etaj)", placeholder="5-etaj").strip()
-                    new_name = st.text_input("Nom (masalan: 5-etaj (Magistrlar))").strip()
-                    new_pass = st.text_input("Parol").strip()
-                    new_sheet = st.text_input("Google Sheet Nomi", value="Navbatchilik_Jadvali").strip()
-                    new_tg = st.text_input("Telegram Guruh ID").strip()
-                    
-                    if st.form_submit_button("Saqlash"):
-                        if new_id and new_name and new_pass:
-                            # Check duplicates
-                            existing_ids = [str(row['floor_id']) for row in data]
-                            if new_id in existing_ids:
-                                st.error("❌ Bu ID allaqachon mavjud!")
-                            else:
-                                settings_ws.append_row([new_id, new_name, new_pass, new_sheet, new_tg])
-                                st.success("✅ Yangi qavat qo'shildi! O'zgarishlarni ko'rish uchun sahifani yangilang.")
-                                st.cache_data.clear()
-                        else:
-                            st.error("⚠️ Barcha maydonlarni to'ldiring!")
-                            
-            with st.expander("🗑️ Qavatni O'chirish"):
-                floor_to_delete = st.selectbox("O'chirish uchun tanlang", 
-                                             df_settings['floor_id'].tolist() if not df_settings.empty else [])
+            if len(data) > 0:
+                header = data[0]
+                rows = data[1:]
+                df_settings = pd.DataFrame(rows, columns=header)
                 
-                if st.button("O'chirish", type="primary"):
-                    if floor_to_delete:
-                        # Find cell to delete
+                # DATA EDITOR - Tahrirlash uchun
+                edited_settings = st.data_editor(
+                    df_settings, 
+                    num_rows="dynamic", 
+                    use_container_width=True,
+                    key="settings_editor"
+                )
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("💾 Sozlamalarni Saqlash", type="primary"):
                         try:
-                            cell = settings_ws.find(floor_to_delete)
-                            settings_ws.delete_rows(cell.row)
-                            st.success(f"✅ {floor_to_delete} o'chirildi!")
+                            # Tozalash va yangilash
+                            settings_ws.clear()
+                            
+                            # Header va ma'lumotlarni birlashtirish
+                            new_data = [edited_settings.columns.tolist()] + edited_settings.astype(str).values.tolist()
+                            settings_ws.update(values=new_data)
+                            
+                            st.success("✅ Sozlamalar yangilandi!")
                             st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Xatolik: {e}")
+                            st.error(f"Saqlashda xatolik: {e}")
+            else:
+                st.warning("Sozlamalar bo'sh yoki o'qib bo'lmadi.")
 
         except Exception as e:
             st.error(f"Sozlamalarni yuklashda xatolik: {e}")
@@ -987,22 +1120,20 @@ if st.session_state.get("is_admin", False):
                     
                     if st.button("🚀 Google Sheets'ga Yozish"):
                         try:
-                            # Open target sheet
-                            target_ws = client.open(target_sheet_name).sheet1
+                            # Open or create target sheet
+                            sh = get_or_create_spreadsheet(target_sheet_name)
+                            target_ws = sh.sheet1
                             
-                            # Prepare data
-                            # Convert to strings to avoid serialization issues
+                            # Convert to strings
                             data_to_upload = df_upload.fillna("").astype(str).values.tolist()
                             
-                            # Append rows
-                            # Note: This appends. It doesn't clear.
-                            # We check if header exists, if not add it from dataframe columns
+                            # Check headers
                             first_row = target_ws.row_values(1)
                             if not first_row:
                                 target_ws.append_row(df_upload.columns.tolist())
                             
-                            for row in data_to_upload:
-                                target_ws.append_row(row)
+                            # Append rows
+                            target_ws.append_rows(data_to_upload)
                                 
                             st.success(f"✅ {len(data_to_upload)} qator muvaffaqiyatli qo'shildi!")
                             send_telegram_alert(f"📤 ADMIN: {len(data_to_upload)} ta talaba yuklandi ({target_sheet_name})")
@@ -1012,16 +1143,107 @@ if st.session_state.get("is_admin", False):
                 except Exception as e:
                     st.error(f"Faylni o'qishda xatolik: {e}")
 
+    with tab3:
+        st.subheader("📝 Talabalar Ro'yxatini Tahrirlash")
+        
+        # Etaj tanlash
+        floor_options_edit = list(FLOOR_CONFIG.keys())
+        edit_floor_id = st.selectbox("Tahrirlash uchun qavatni tanlang", floor_options_edit, 
+                                   format_func=lambda x: FLOOR_CONFIG[x]["name"] if x in FLOOR_CONFIG else x,
+                                   key="edit_floor_select")
+        
+        if edit_floor_id:
+            target_sheet_name = FLOOR_CONFIG[edit_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
+            
+            # Yuklash tugmasi
+            if st.button("🔄 Ma'lumotlarni Yuklash", key="load_data_edit"):
+                st.session_state["data_loaded_for_edit"] = True
+            
+            if st.session_state.get("data_loaded_for_edit", False):
+                try:
+                    # 1. Client olish
+                    client = get_client()
+                    
+                    # 2. Sheetni ochish (yoki yaratish)
+                    try:
+                        sh = get_or_create_spreadsheet(target_sheet_name)
+                    except Exception as sheet_err:
+                        st.error(f"❌ Fayl bilan ishlashda xato: {sheet_err}")
+                        sa_email = "bot-user@ornate-course-481512-n2.iam.gserviceaccount.com"
+                        st.info(f"💡 Agar fayl sizda bo'lsa, uni quyidagi email bilan 'Share' qilganingizni tekshiring: {sa_email}")
+                        st.stop()
+                    
+                    # 3. Worksheetni olish
+                    ws = sh.sheet1
+                    
+                    # 4. Ma'lumotlarni o'qish
+                    try:
+                        data = ws.get_all_values()
+                    except Exception as read_error:
+                        st.error(f"⚠️ Ma'lumotlarni o'qishda muammo: {read_error}")
+                        st.stop()
+                    
+                    if len(data) > 0:
+                        headers = data[0]
+                        rows = data[1:]
+                        
+                        # DataFrame yaratish
+                        unique_headers = []
+                        seen = {}
+                        for h in headers:
+                            h_str = str(h).strip() # Headerlarni tozalash
+                            if h_str in seen:
+                                seen[h_str] += 1
+                                unique_headers.append(f"{h_str}_{seen[h_str]}")
+                            else:
+                                seen[h_str] = 0
+                                unique_headers.append(h_str)
+                        
+                        try:
+                            df_edit = pd.DataFrame(rows, columns=unique_headers)
+                        except Exception as e:
+                            st.error(f"Jadval tuzishda xatolik: {e}")
+                            st.write("Headerlar:", unique_headers)
+                            st.write("Birinchi qator:", rows[0] if rows else "Bo'sh")
+                            st.stop()
+                        
+                        st.subheader(f"📋 {target_sheet_name}")
+                        st.caption(f"Jami talabalar: {len(df_edit)}")
+                        
+                        # Tahrirlash oynasi
+                        edited_df = st.data_editor(
+                            df_edit,
+                            num_rows="dynamic",
+                            use_container_width=True,
+                            key="student_data_editor"
+                        )
+                        
+                        st.warning("⚠️ 'Saqlash' tugmasini bosganingizda Google Sheetdagi ESKI ma'lumotlar o'chib, yangisi yoziladi!")
+                        
+                        if st.button("💾 O'zgarishlarni Saqlash", type="primary", key="save_student_data"):
+                            try:
+                                ws.clear()
+                                # Header va ma'lumotlarni tayyorlash
+                                update_values = [edited_df.columns.tolist()] + edited_df.fillna("").astype(str).values.tolist()
+                                ws.update(values=update_values)
+                                st.success("✅ Ma'lumotlar saqlandi!")
+                                st.balloons()
+                                # Keshni tozalash
+                                st.cache_data.clear()
+                            except Exception as e:
+                                st.error(f"Saqlashda xatolik: {e}")
+                    else:
+                        st.info("Jadval bo'sh.")
+                except Exception as e:
+                    st.error(f"Kutilmagan xatolik: {type(e).__name__} - {e}")
+
     st.stop() # Stop execution so admin sees only this panel
 
-def get_sheet_name():
-    """Joriy etajning Google Sheet nomini olish"""
-    config = get_current_config()
-    return config.get("sheet_name", GOOGLE_SHEET_NAME)
 
-def get_main_sheet():
-    sheet_name = get_sheet_name()
-    return get_client().open(sheet_name).sheet1
+
+
+
+
 
 def get_queue_sheet():
     """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
@@ -1037,28 +1259,28 @@ def get_queue_sheet():
         ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
         return ws
 
-def validate_phone(phone):
-    """Telefon raqamini tekshirish va tozalash"""
-    if not phone:
-        return None
-    phone = str(phone).replace("+", "").replace(" ", "").replace("-", "")
-    phone = phone.replace("(", "").replace(")", "").replace(".0", "")
-    phone = ''.join(filter(str.isdigit, phone))
-    if len(phone) < 9:
-        return None
-    if len(phone) == 9:
-        phone = "998" + phone
-    return phone
 
-def add_to_sms_queue(queue_sheet, phone, message, student_name=""):
-    """SMS navbatiga xavfsiz qo'shish"""
-    clean_phone = validate_phone(phone)
-    if not clean_phone:
-        return False
-    timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-    # Endi ETAJ ustuni kerak emas - har bir etaj o'z sheet'ida
-    queue_sheet.append_row([clean_phone, message, "PENDING", timestamp, student_name])
-    return True
+
+
+
+
+
+
+
+# --- HEADER & NAVIGATION ---
+current_config = get_current_config()
+floor_name = current_config.get("name", "4-etaj")
+
+# 1. Sidebar (Menyu)
+with st.sidebar:
+    st.title("Menyu")
+    st.write(f"🏢 **{floor_name}**")
+    if st.button("🚪 Tizimdan Chiqish", key="logout_sidebar", type="primary", use_container_width=True):
+        st.session_state.clear()
+        st.query_params.clear()
+        st.rerun()
+
+
 
 # --- MA'LUMOTNI O'QISH ---
 try:
@@ -1094,57 +1316,32 @@ try:
     if 'telefon raqami' in df.columns:
         df['telefon raqami'] = df['telefon raqami'].astype(str).str.replace(".0", "", regex=False)
 except Exception as e:
-    st.error(f"Google Sheetga ulanishda xatolik: {e}")
+    import traceback
+    st.error(f"❌ Google Sheetga ulanishda xatolik: {e}")
+    with st.expander("🔍 Texnik tafsilotlar (Debug)"):
+        st.code(traceback.format_exc())
     st.stop()
 
-# --- ZAMONAVIY HEADER ---
-current_config = get_current_config()
-floor_name = current_config.get("name", "4-etaj")
-
 st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(0, 212, 170, 0.3);
-    border-radius: 20px;
-    padding: 25px 40px;
-    margin-bottom: 25px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);
-">
-    <div>
-        <h1 style="
-            margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-            background: linear-gradient(145deg, #ffffff, #00D4AA);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        ">🏢 Navbatchilik Tizimi</h1>
-        <p style="
-            margin: 5px 0 0 0;
-            color: #888;
-            font-size: 14px;
-        ">TTJ Yotoqxona Boshqaruv Paneli</p>
-    </div>
-    <div style="
-        background: linear-gradient(145deg, #00D4AA, #00B894);
-        padding: 12px 25px;
-        border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);
-    ">
-        <span style="
-            color: #0a0a0a;
-            font-weight: 700;
-            font-size: 16px;
-        ">📍 {floor_name}</span>
-    </div>
+<div style="background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);">
+<div>
+<h1 style="margin: 0; font-size: 28px; font-weight: 800; background: linear-gradient(145deg, #ffffff, #00D4AA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
+<p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
+</div>
+<div style="display: flex; gap: 15px; align-items: center;">
+<div style="background: linear-gradient(145deg, #00D4AA, #00B894); padding: 12px 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);">
+<span style="color: #0a0a0a; font-weight: 700; font-size: 16px;">📍 {floor_name}</span>
+</div>
+<a href="?action=logout" target="_self" style="text-decoration: none;">
+<div style="background: rgba(255, 87, 51, 0.15); border: 1px solid rgba(255, 87, 51, 0.4); color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: 700; font-size: 16px; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+<span>🚪</span>
+<span>CHIQISH</span>
+</div>
+</a>
+</div>
 </div>
 """, unsafe_allow_html=True)
+
 
 # ============================================================================
 # 3D KARTALAR BILAN MENYU

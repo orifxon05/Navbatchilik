@@ -20,30 +20,113 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 
+# --- GOOGLE CLIENT (birinchi bo'lishi kerak) ---
+@st.cache_resource
+def get_client():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    
+    # 1. Streamlit Cloud Secrets (Agar internetda bo'lsa)
+    if "gcp_service_account" in st.secrets:
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    # 2. Lokal fayl (Agar kompyuterda bo'lsa)
+    elif os.path.exists("credentials.json"):
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    else:
+        st.error("Kalit topilmadi! (credentials.json ham, Secrets ham yo'q)")
+        st.stop()
+        
+    client = gspread.authorize(creds)
+    return client
+
 # --- TELEGRAM SOZLAMALARI ---
 TELEGRAM_TOKEN = "8259734572:AAGeJLKmmruLByDjx81gdi1VcjNt3ZnX894"
 ADMIN_CHAT_ID = "7693191223"
 
-# Etajlar konfiguratsiyasi
-FLOOR_CONFIG = {
-    "4-etaj": {
-        "name": "4-etaj (O'g'il bolalar)",
-        "sheet_name": "Navbatchilik_Jadvali",
-        "telegram_group": "-1002435484678"
-    },
-    "3-etaj": {
-        "name": "3-etaj (Qizlar)",
-        "sheet_name": "TTJ 3-etaj Navbatchilik",
-        "telegram_group": "-1003566186790"
+# ============================================================================
+# GOOGLE SHEETS SETTINGS - DINAMIK KONFIGURATSIYA
+# ============================================================================
+
+SETTINGS_SHEET_NAME = "Navbatchilik_Jadvali"  # SETTINGS sahifasi shu Sheet'da
+SETTINGS_WORKSHEET = "SETTINGS"  # Worksheet nomi
+
+@st.cache_data(ttl=1)  # 1 sekund kesh (Deyarli keshlamaydi, o'zgarishlar darhol ko'rinadi)
+def load_floor_config():
+    """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash"""
+    try:
+        client = get_client()
+        settings_sheet = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
+        data = settings_sheet.get_all_records()
+        
+        config = {}
+        for row in data:
+            floor_id = row.get("floor_id", "").strip()
+            if floor_id:
+                config[floor_id] = {
+                    "name": row.get("name", ""),
+                    "password": row.get("password", ""),
+                    "sheet_name": row.get("sheet_name", ""),
+                    "telegram_group": row.get("telegram_group", "")
+                }
+        
+        return config if config else get_default_config()
+    except:
+        # Agar SETTINGS sahifasi yo'q bo'lsa, default qiymatlar
+        return get_default_config()
+
+def get_default_config():
+    """Default konfiguratsiya (SETTINGS yo'q bo'lsa)"""
+    return {
+        "4-etaj": {
+            "name": "4-etaj (O'g'il bolalar)",
+            "password": "sheeyh",
+            "sheet_name": "Navbatchilik_Jadvali",
+            "telegram_group": "-1002435484678"
+        },
+        "3-etaj": {
+            "name": "3-etaj (Qizlar)",
+            "password": "3etaj",
+            "sheet_name": "TTJ 3-etaj Navbatchilik",
+            "telegram_group": "-1003566186790"
+        }
     }
-}
+
+def init_settings_sheet():
+    """SETTINGS sahifasini yaratish (agar yo'q bo'lsa)"""
+    try:
+        client = get_client()
+        spreadsheet = client.open(SETTINGS_SHEET_NAME)
+        
+        # SETTINGS worksheet bormi?
+        try:
+            spreadsheet.worksheet(SETTINGS_WORKSHEET)
+            return True  # Allaqachon bor
+        except:
+            # Yo'q, yaratamiz
+            ws = spreadsheet.add_worksheet(title=SETTINGS_WORKSHEET, rows=100, cols=5)
+            ws.append_row(["floor_id", "name", "password", "sheet_name", "telegram_group"])
+            
+            # Default ma'lumotlarni qo'shish
+            ws.append_row(["4-etaj", "4-etaj (O'g'il bolalar)", "sheeyh", 
+                          "Navbatchilik_Jadvali", "-1002435484678"])
+            ws.append_row(["3-etaj", "3-etaj (Qizlar)", "3etaj", 
+                          "TTJ 3-etaj Navbatchilik", "-1003566186790"])
+            
+            return True
+    except Exception as e:
+        st.error(f"SETTINGS yaratishda xatolik: {e}")
+        return False
+
+# FLOOR_CONFIG ni Google Sheets'dan yuklash
+FLOOR_CONFIG = load_floor_config()
 
 # Joriy etaj (session_state da saqlanadi)
 def get_current_floor():
-    return st.session_state.get("current_floor", "4-etaj")
+    return st.session_state.get("current_floor", list(FLOOR_CONFIG.keys())[0])
 
 def get_current_config():
-    return FLOOR_CONFIG.get(get_current_floor(), FLOOR_CONFIG["4-etaj"])
+    floor = get_current_floor()
+    return FLOOR_CONFIG.get(floor, list(FLOOR_CONFIG.values())[0])
 
 TTJ_GROUP_ID = "-1002435484678"  # Default (4-etaj)
 
@@ -71,161 +154,102 @@ def send_to_ttj_group(message):
         pass
 
 # ============================================================================
-# XAVFSIZLIK TIZIMI / SECURITY SYSTEM
-# Copyright (c) 2024 Orifxon Marufxonov
+# HELPER FUNCTIONS (Sheet & Data)
 # ============================================================================
 
-# Xavfsizlik sozlamalari
-MAX_LOGIN_ATTEMPTS = 5  # Maksimal urinishlar soni
-BLOCK_TIME_MINUTES = 30  # Bloklash vaqti (daqiqa)
-ALERT_THRESHOLD = 3  # Ogohlantirishdan oldin urinishlar
+def get_sheet_name():
+    """Joriy etajning Google Sheet nomini olish"""
+    config = get_current_config()
+    return config.get("sheet_name", GOOGLE_SHEET_NAME)
 
-def get_security_state():
-    """Xavfsizlik holatini olish"""
-    if "login_attempts" not in st.session_state:
-        st.session_state.login_attempts = 0
-    if "blocked_until" not in st.session_state:
-        st.session_state.blocked_until = None
-    if "last_attempt_time" not in st.session_state:
-        st.session_state.last_attempt_time = None
-    return st.session_state
-
-def is_blocked():
-    """Foydalanuvchi bloklangan yoki yo'qligini tekshirish"""
-    state = get_security_state()
-    if state.blocked_until:
-        if datetime.now() < state.blocked_until:
-            return True
-        else:
-            # Bloklash muddati tugadi
-            state.blocked_until = None
-            state.login_attempts = 0
-    return False
-
-def record_failed_login():
-    """Muvaffaqiyatsiz kirishni qayd qilish"""
-    state = get_security_state()
-    state.login_attempts += 1
-    state.last_attempt_time = datetime.now()
-    
-    # Ogohlantirishni yuborish
-    if state.login_attempts >= ALERT_THRESHOLD:
-        send_security_alert(state.login_attempts)
-    
-    # Maksimal urinishlardan oshsa bloklash
-    if state.login_attempts >= MAX_LOGIN_ATTEMPTS:
-        state.blocked_until = datetime.now() + timedelta(minutes=BLOCK_TIME_MINUTES)
-        send_block_alert()
-
-def reset_login_attempts():
-    """Muvaffaqiyatli kirishdan keyin urinishlarni tozalash"""
-    state = get_security_state()
-    state.login_attempts = 0
-    state.blocked_until = None
-
-def send_security_alert(attempts):
-    """Xavfsizlik ogohlantirishi yuborish"""
-    tashkent_time = (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-    msg = f"""🚨 XAVFSIZLIK OGOHLANTIRISHI!
-
-⚠️ Shubhali faoliyat aniqlandi!
-📊 Noto'g'ri parol urinishlari: {attempts}
-🕐 Vaqt: {tashkent_time} (Toshkent)
-
-Agar bu siz bo'lmasangiz, parolni o'zgartiring!"""
-    send_telegram_alert(msg)
-
-def send_block_alert():
-    """Bloklash haqida xabar yuborish"""
-    tashkent_time = (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-    msg = f"""🔒 FOYDALANUVCHI BLOKLANDI!
-
-❌ {MAX_LOGIN_ATTEMPTS} marta noto'g'ri parol kiritildi
-⏱️ Bloklash muddati: {BLOCK_TIME_MINUTES} daqiqa
-🕐 Vaqt: {tashkent_time} (Toshkent)
-
-Ehtimol brute-force hujumi!"""
-    send_telegram_alert(msg)
-
-def get_tashkent_time():
-    """Toshkent vaqtini olish (UTC+5)"""
-    return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-
-def get_device_type():
-    """Qurilma turini aniqlash"""
+def get_or_create_spreadsheet(sheet_name):
+    """Faylni ochish yoki topilmasa avtomatik yaratish"""
+    client = get_client()
     try:
-        from streamlit.web.server.websocket_headers import _get_websocket_headers
-        headers = _get_websocket_headers()
-        user_agent = headers.get("User-Agent", "").lower() if headers else ""
-        
-        if "android" in user_agent or "mobile" in user_agent:
-            return "📱 Mobil ilova"
-        elif "iphone" in user_agent or "ipad" in user_agent:
-            return "🍎 iOS qurilma"
-        else:
-            return "💻 Kompyuter/Brauzer"
+        return client.open(sheet_name)
+    except gspread.exceptions.SpreadsheetNotFound:
+        try:
+            # Yangi Spreadsheet yaratish
+            sh = client.create(sheet_name)
+            ws = sh.sheet1
+            headers = ["Ism", "Familiya", "Xona raqami", "Telefon raqami", "Telegram ID"]
+            ws.append_row(headers)
+            
+            # Xabar yuborish
+            send_telegram_alert(f"🆕 YANGI BAZA YARATILDI!\n\n🏢 Qavat: {sheet_name}\n📂 Fayl Google Drive'da avtomatik ochildi.")
+            return sh
+        except Exception as create_error:
+            # Agar yaratishda xatolik bo'lsa (masalan Quota Exceeded), foydalanuvchiga yechimni ko'rsatamiz.
+            sa_email = "bot-user@ornate-course-481512-n2.iam.gserviceaccount.com"
+            st.error(f"❌ XATOLIK: '{sheet_name}' fayli topilmadi!")
+            st.warning("⚠️ Bot yangi fayl yaratmoqchi bo'ldi, lekin Google Drive xotirangiz to'lgan (Quota Exceeded).")
+            st.info(f"✅ YECHIM: Iltimos, Google Drive'da '{sheet_name}' nomli Excel fayl yarating va unga quyidagi emailni 'Editor' qilib qo'shing:")
+            st.code(sa_email, language="text")
+            st.caption("Fayl nomini to'g'ri yozganingizga ishonch hosil qiling (katta-kichik harflar bir xil bo'lishi kerak).")
+            st.stop()
+
+def get_main_sheet():
+    sheet_name = get_sheet_name()
+    sh = get_or_create_spreadsheet(sheet_name)
+    return sh.sheet1
+
+def get_queue_sheet():
+    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi"""
+    client = get_client()
+    try:
+        sheet_name = get_sheet_name()
+        return client.open(sheet_name).worksheet("SMS_QUEUE")
     except:
-        return "🌐 Noma'lum qurilma"
+        try:
+            sheet_name = get_sheet_name()
+            ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
+            ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
+            return ws
+        except:
+             return None
 
-def send_successful_login_alert():
-    """Muvaffaqiyatli kirish haqida xabar"""
-    device = get_device_type()
-    tashkent_time = get_tashkent_time()
-    
-    # Joriy etaj nomini olish
-    floor = st.session_state.get("current_floor", "4-etaj")
-    floor_name = FLOOR_CONFIG.get(floor, {}).get("name", floor)
-    
-    msg = f"""✅ TIZIMGA KIRISH
+def validate_phone(phone):
+    """Telefon raqamini tekshirish va tozalash"""
+    if not phone:
+        return None
+    phone = str(phone).replace("+", "").replace(" ", "").replace("-", "")
+    phone = phone.replace("(", "").replace(")", "").replace(".0", "")
+    phone = ''.join(filter(str.isdigit, phone))
+    if len(phone) < 9:
+        return None
+    if len(phone) == 9:
+        phone = "998" + phone
+    return phone
 
-🏢 Etaj: {floor_name}
-🕐 Vaqt: {tashkent_time} (Toshkent)
-{device}
-
-Agar bu siz bo'lmasangiz - darhol parolni o'zgartiring!"""
-    send_telegram_alert(msg)
-
-def log_activity(action, details=""):
-    """Muhim faoliyatni qayd qilish va xabar yuborish"""
-    tashkent_time = get_tashkent_time()
-    msg = f"""📋 FAOLIYAT LOGI
-
-📌 Harakat: {action}
-📝 Tafsilotlar: {details}
-🕐 Vaqt: {tashkent_time} (Toshkent)"""
-    send_telegram_alert(msg)
-
-def send_telegram_to_student(telegram_id, message, student_name=""):
-    """Talabaga shaxsiy Telegram xabar yuborish"""
-    if not telegram_id:
+def add_to_sms_queue(queue_sheet, phone, message, student_name=""):
+    """SMS navbatiga xavfsiz qo'shish"""
+    clean_phone = validate_phone(phone)
+    if not clean_phone:
         return False
-    
-    # telegram_id ni tozalash
-    tg_id = str(telegram_id).replace(".0", "").strip()
-    if not tg_id or tg_id == "nan" or len(tg_id) < 5:
-        return False
-    
+    timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+    # Endi ETAJ ustuni kerak emas - har bir etaj o'z sheet'ida
+    queue_sheet.append_row([clean_phone, message, "PENDING", timestamp, student_name])
+    return True
+
+def log_activity(action, details):
+    """Admin harakatlarini LOG worksheetda saqlash"""
     try:
-        import requests
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        response = requests.post(url, data={
-            "chat_id": tg_id,
-            "text": message,
-            "parse_mode": "HTML"
-        }, timeout=10)
+        client = get_client()
+        current_floor = get_current_floor()
+        sheet_name = FLOOR_CONFIG.get(current_floor, {}).get("sheet_name")
+        if not sheet_name: return
         
-        if response.status_code == 200:
-            # Muvaffaqiyatli - adminga xabar
-            send_telegram_alert(f"✅ TG: {student_name} ({tg_id}) - xabar yuborildi")
-            return True
-        else:
-            # Xato tafsilotlari
-            error_info = response.json().get('description', 'Noma\'lum xato')
-            send_telegram_alert(f"❌ TG: {student_name} ({tg_id}) - {error_info}")
-            return False
-    except Exception as e:
-        send_telegram_alert(f"❌ TG: {student_name} ({tg_id}) - xato: {str(e)[:50]}")
-        return False
+        sh = client.open(sheet_name)
+        try:
+            log_ws = sh.worksheet("ACTIVITY_LOG")
+        except:
+            log_ws = sh.add_worksheet("ACTIVITY_LOG", 1000, 4)
+            log_ws.append_row(["VAQT", "ETAJ", "HARAKAT", "DETAL"])
+            
+        timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+        log_ws.append_row([timestamp, current_floor, action, details])
+    except:
+        pass
 
 # --- KONFIGURATSIYA ---
 GOOGLE_SHEET_NAME = "Navbatchilik_Jadvali"
@@ -283,597 +307,106 @@ st.set_page_config(
 # ============================================================================
 st.markdown("""
 <style>
-    /* ===== ASOSIY RANGLAR ===== */
     :root {
         --primary: #00D4AA;
         --primary-dark: #00B894;
         --accent: #00CEC9;
         --bg-dark: #0a0a0a;
-        --bg-card: rgba(17, 17, 17, 0.8);
         --glass: rgba(255, 255, 255, 0.05);
         --glass-border: rgba(0, 212, 170, 0.3);
         --text: #ffffff;
-        --text-muted: #888888;
     }
-    
-    /* ===== UMUMIY STILLAR ===== */
-    .stApp {
-        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
-    }
-    
-    /* ===== GLASSMORPHISM KARTALAR ===== */
-    .glass-card {
-        background: var(--glass);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid var(--glass-border);
-        border-radius: 20px;
-        padding: 25px;
-        margin: 10px 0;
-        box-shadow: 0 8px 32px rgba(0, 212, 170, 0.1);
-        transition: all 0.3s ease;
-    }
-    
-    .glass-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 15px 40px rgba(0, 212, 170, 0.2);
-        border-color: var(--primary);
-    }
-    
-    /* ===== 3D TUGMALAR ===== */
+    .stApp { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%); }
     .stButton > button {
         background: linear-gradient(145deg, #00D4AA, #00B894) !important;
-        border: none !important;
-        border-radius: 12px !important;
-        padding: 12px 30px !important;
-        color: #0a0a0a !important;
-        font-weight: 700 !important;
-        font-size: 15px !important;
-        box-shadow: 
-            0 6px 20px rgba(0, 212, 170, 0.4),
-            0 3px 6px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
-        transition: all 0.2s ease !important;
-        text-transform: uppercase !important;
-        letter-spacing: 1px !important;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-3px) !important;
-        box-shadow: 
-            0 10px 30px rgba(0, 212, 170, 0.5),
-            0 5px 10px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
-    }
-    
-    .stButton > button:active {
-        transform: translateY(1px) !important;
-        box-shadow: 
-            0 2px 10px rgba(0, 212, 170, 0.3),
-            inset 0 2px 4px rgba(0, 0, 0, 0.2) !important;
-    }
-    
-    /* ===== FORM SUBMIT TUGMALARI ===== */
-    .stFormSubmitButton > button {
-        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
-        border: none !important;
         border-radius: 12px !important;
         color: #0a0a0a !important;
         font-weight: 700 !important;
-        box-shadow: 
-            0 6px 20px rgba(0, 212, 170, 0.4),
-            0 3px 6px rgba(0, 0, 0, 0.3) !important;
+        box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
         transition: all 0.2s ease !important;
     }
-    
-    .stFormSubmitButton > button:hover {
-        transform: translateY(-3px) !important;
-        box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5) !important;
-    }
-    
-    /* ===== TABLAR ===== */
-    .stTabs [data-baseweb="tab-list"] {
-        background: var(--glass);
-        border-radius: 15px;
-        padding: 5px;
-        gap: 5px;
-        border: 1px solid var(--glass-border);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 10px;
-        color: var(--text-muted);
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
-        color: #0a0a0a !important;
-    }
-    
-    /* ===== INPUT MAYDONLARI ===== */
-    .stTextInput > div > div > input,
-    .stSelectbox > div > div,
-    .stMultiSelect > div > div {
-        background: var(--glass) !important;
-        border: 1px solid var(--glass-border) !important;
-        border-radius: 10px !important;
-        color: var(--text) !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: var(--primary) !important;
-        box-shadow: 0 0 20px rgba(0, 212, 170, 0.3) !important;
-    }
-    
-    /* ===== JADVALLAR ===== */
-    .stDataFrame {
-        background: var(--glass) !important;
-        border-radius: 15px !important;
-        border: 1px solid var(--glass-border) !important;
-        overflow: hidden;
-    }
-    
-    /* ===== METRIKALAR ===== */
-    [data-testid="stMetricValue"] {
-        font-size: 2.5rem !important;
-        font-weight: 800 !important;
-        background: linear-gradient(145deg, #00D4AA, #00CEC9);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--text-muted) !important;
-        font-weight: 500 !important;
-    }
-    
-    /* ===== SARLAVHALAR ===== */
-    h1, h2, h3 {
-        background: linear-gradient(145deg, #ffffff, #00D4AA);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        font-weight: 800 !important;
-    }
-    
-    /* ===== SIDEBAR ===== */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0a0a0a 0%, #1a1a2e 100%) !important;
-        border-right: 1px solid var(--glass-border) !important;
-    }
-    
-    /* ===== EXPANDER ===== */
-    .streamlit-expanderHeader {
-        background: var(--glass) !important;
-        border: 1px solid var(--glass-border) !important;
-        border-radius: 10px !important;
-    }
-    
-    /* ===== INFO/WARNING/ERROR ===== */
-    .stAlert {
-        background: var(--glass) !important;
-        border: 1px solid var(--glass-border) !important;
-        border-radius: 10px !important;
-    }
-    
-    /* ===== GLOW EFFEKT ===== */
-    .glow-text {
-        text-shadow: 0 0 20px rgba(0, 212, 170, 0.5);
-    }
-    
-    /* ===== ANIMATSIYALAR ===== */
-    @keyframes pulse {
-        0%, 100% { box-shadow: 0 0 20px rgba(0, 212, 170, 0.3); }
-        50% { box-shadow: 0 0 40px rgba(0, 212, 170, 0.6); }
-    }
-    
-    .pulse-glow {
-        animation: pulse 2s infinite;
-    }
-    
-    /* ===== MICRO-ANIMATSIYALAR ===== */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    @keyframes slideIn {
-        from { opacity: 0; transform: translateX(-30px); }
-        to { opacity: 1; transform: translateX(0); }
-    }
-    
-    @keyframes scaleIn {
-        from { opacity: 0; transform: scale(0.9); }
-        to { opacity: 1; transform: scale(1); }
-    }
-    
-    @keyframes shimmer {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-    }
-    
-    @keyframes float {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-10px); }
-    }
-    
-    /* Animatsiya klasslari */
-    .animate-fade { animation: fadeIn 0.5s ease-out; }
-    .animate-slide { animation: slideIn 0.4s ease-out; }
-    .animate-scale { animation: scaleIn 0.3s ease-out; }
-    .animate-float { animation: float 3s ease-in-out infinite; }
-    
-    /* Hover effektlari */
-    .hover-lift {
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .hover-lift:hover {
-        transform: translateY(-8px) scale(1.02);
-        box-shadow: 0 20px 40px rgba(0, 212, 170, 0.3);
-    }
-    
-    /* Click effekti */
-    .click-effect:active {
-        transform: scale(0.95);
-        transition: transform 0.1s;
-    }
-    
-    /* ===== GLASSMORPHISM YAXSHILANGAN ===== */
-    .glass-premium {
-        background: linear-gradient(135deg, 
-            rgba(255, 255, 255, 0.1) 0%, 
-            rgba(255, 255, 255, 0.05) 50%,
-            rgba(0, 212, 170, 0.05) 100%);
-        backdrop-filter: blur(25px) saturate(180%);
-        -webkit-backdrop-filter: blur(25px) saturate(180%);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 24px;
-        box-shadow: 
-            0 8px 32px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.1),
-            0 0 0 1px rgba(0, 212, 170, 0.1);
-    }
-    
-    /* ===== ZEBRA STRIPING JADVALLAR ===== */
-    [data-testid="stDataFrame"] table tbody tr:nth-child(odd) {
-        background: rgba(0, 212, 170, 0.05) !important;
-    }
-    
-    [data-testid="stDataFrame"] table tbody tr:nth-child(even) {
-        background: rgba(0, 0, 0, 0.2) !important;
-    }
-    
-    [data-testid="stDataFrame"] table tbody tr:hover {
-        background: rgba(0, 212, 170, 0.15) !important;
-        transition: background 0.2s ease;
-    }
-    
-    [data-testid="stDataFrame"] table thead tr {
-        background: linear-gradient(145deg, rgba(0, 212, 170, 0.2), rgba(0, 206, 201, 0.1)) !important;
-    }
-    
-    [data-testid="stDataFrame"] table th {
-        color: #00D4AA !important;
-        font-weight: 700 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        border-bottom: 2px solid rgba(0, 212, 170, 0.3) !important;
-    }
-    
-    /* ===== SCROLL BAR ===== */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: var(--bg-dark);
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: var(--primary);
-        border-radius: 10px;
-    }
-    
-    /* ===== 📱 MOBIL RESPONSIVE ===== */
-    @media (max-width: 768px) {
-        /* Tugmalar kichikroq */
-        .stButton > button {
-            padding: 10px 15px !important;
-            font-size: 12px !important;
-            letter-spacing: 0.5px !important;
-        }
-        
-        /* Sarlavhalar kichikroq */
-        h1 { font-size: 1.5rem !important; }
-        h2 { font-size: 1.2rem !important; }
-        h3 { font-size: 1rem !important; }
-        
-        /* Metrikalar kichikroq */
-        [data-testid="stMetricValue"] {
-            font-size: 1.8rem !important;
-        }
-        
-        /* Kolonlar vertikal */
-        [data-testid="column"] {
-            width: 100% !important;
-            flex: 1 1 100% !important;
-        }
-        
-        /* Padding kamroq */
-        .block-container {
-            padding: 1rem !important;
-        }
-        
-        /* Kartalar kichikroq */
-        .glass-card, .glass-premium {
-            padding: 15px !important;
-            border-radius: 15px !important;
-        }
-        
-        /* Form elementlari */
-        .stTextInput > div > div > input {
-            font-size: 16px !important; /* iOS zoom oldini olish */
-        }
-    }
-    
-    @media (max-width: 480px) {
-        /* Juda kichik ekranlar */
-        .stButton > button {
-            padding: 8px 12px !important;
-            font-size: 11px !important;
-        }
-        
-        h1 { font-size: 1.2rem !important; }
-        
-        [data-testid="stMetricValue"] {
-            font-size: 1.5rem !important;
-        }
-    }
-    
-    /* ===== HIDE STREAMLIT BRANDING ===== */
+    .stButton > button:hover { transform: translateY(-3px) !important; box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5); }
+    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    [data-testid="stHeader"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
-def get_client():
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    
-    # 1. Streamlit Cloud Secrets (Agar internetda bo'lsa)
-    if "gcp_service_account" in st.secrets:
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    # 2. Lokal fayl (Agar kompyuterda bo'lsa)
-    elif os.path.exists("credentials.json"):
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    else:
-        st.error("Kalit topilmadi! (credentials.json ham, Secrets ham yo'q)")
-        st.stop()
-        
-    client = gspread.authorize(creds)
-    return client
+# Check Logout Action
+if st.query_params.get("action") == "logout":
+    st.session_state.clear()
+    st.query_params.clear()
+    st.rerun()
 
 def check_password():
     """Returns `True` if the user had the correct password."""
-    
-    # Query params orqali sessiyani saqlash
-    if "auth" in st.query_params:
-        if st.query_params["auth"] == "ok":
-            st.session_state["password_correct"] = True
-            # Floor ni ham tiklash
-            if "floor" in st.query_params:
-                st.session_state["current_floor"] = st.query_params["floor"]
-            return True
+    if st.query_params.get("auth") == "ok":
+        st.session_state["password_correct"] = True
+        floor = st.query_params.get("floor")
+        role = st.query_params.get("role")
+        if role == "admin":
+            st.session_state["is_admin"] = True
+            st.session_state["current_floor"] = "admin"
+        elif floor:
+            st.session_state["is_admin"] = False
+            st.session_state["current_floor"] = floor
+        return True
 
     if st.session_state.get("password_correct", False):
         return True
     
-    # Bloklash tekshiruvi
     if is_blocked():
-        state = get_security_state()
-        remaining = state.blocked_until - datetime.now()
-        minutes_left = int(remaining.total_seconds() / 60) + 1
-        st.error(f"🔒 Siz {minutes_left} daqiqaga bloklangansiz! Keyinroq urinib ko'ring.")
-        st.warning(f"⚠️ Sabab: Juda ko'p noto'g'ri parol urinishlari")
+        st.error("🔒 Siz bloklangansiz! Keyinroq urinib ko'ring.")
         return False
 
-    # Rasmni base64 ga o'tkazish
     import base64
-    with open("login_bg.png", "rb") as f:
-        bg_image = base64.b64encode(f.read()).decode()
+    bg_image = ""
+    try:
+        with open("login_bg.png", "rb") as f:
+            bg_image = base64.b64encode(f.read()).decode()
+    except: pass
     
-    # Fullscreen background CSS
     st.markdown(f"""
     <style>
-        .stApp {{
-            background-image: url("data:image/png;base64,{bg_image}");
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-        }}
-        
-        /* Login box styling */
-        .login-box {{
-            background: rgba(0, 0, 0, 0.7);
-            padding: 40px;
-            border-radius: 20px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            max-width: 400px;
-            margin: 0 auto;
-            margin-top: 5vh;
-        }}
-        
-        .login-title {{
-            color: #4FC3F7;
-            text-align: center;
-            font-size: 28px;
-            margin-bottom: 10px;
-        }}
-        
-        .login-subtitle {{
-            color: #aaa;
-            text-align: center;
-            font-style: italic;
-            margin-bottom: 30px;
-        }}
-        
-        /* Hide Streamlit branding */
-        #MainMenu {{visibility: hidden;}}
-        footer {{visibility: hidden;}}
-        header {{visibility: hidden;}}
-        
-        /* Tepadagi ortiqcha qora qutini yashirish */
-        [data-testid="stHeader"] {{
-            display: none !important;
-        }}
-        
-        /* Bo'sh block containerlarni yashirish */
-        .block-container:empty {{
-            display: none !important;
-        }}
-        
-        /* Sidebar yashirish */
-        section[data-testid="stSidebar"] {{
-            display: none !important;
-        }}
-        
-        /* Birinchi bo'sh elementni yashirish */
-        .main .block-container > div:first-child:empty {{
-            display: none !important;
-        }}
-        
-        /* Streamlit input wrapper */
-        .stTextInput > div:first-child {{
-            background: transparent !important;
+        .stApp {{ background-image: url("data:image/png;base64,{bg_image}"); background-size: cover; background-position: center; }}
     </style>
     """, unsafe_allow_html=True)
     
-    # Login sarlavhasi (markazda)
-    st.markdown("""
-    <div style="text-align: center; margin-top: 15vh;">
-        <p style="color: #4FC3F7; font-size: 32px; margin-bottom: 10px;">🔒 Tizimga kirish</p>
-        <p style="color: #aaa; font-style: italic; margin-bottom: 30px;">TTJ Yotoqxona Navbatchilik Tizimi</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div style="text-align: center; margin-top: 15vh;"><p style="color: #4FC3F7; font-size: 32px;">🔒 Tizimga kirish</p></div>""", unsafe_allow_html=True)
     
-    # Qolgan urinishlar haqida ogohlantirish
-    state = get_security_state()
-    if state.login_attempts > 0:
-        remaining_attempts = MAX_LOGIN_ATTEMPTS - state.login_attempts
-        if remaining_attempts <= 3:
-            st.warning(f"⚠️ Qolgan urinishlar: {remaining_attempts}")
-    
-    # Form (Enter bilan ishlaydi)
-    with st.form("login_form"):
-        password = st.text_input("Parolni kiriting", type="password", placeholder="Parolni kiriting va Enter bosing...", label_visibility="collapsed")
-        submit_button = st.form_submit_button("🚀 Kirish", use_container_width=True)
-
-        if submit_button:
-            # Parollarni tekshirish
-            password_clean = password.strip()
-            
-            # 4-etaj paroli
-            if password_clean == st.secrets["password"]:
-                reset_login_attempts()
-                st.session_state["password_correct"] = True
-                st.session_state["current_floor"] = "4-etaj"
-                st.query_params["auth"] = "ok"
-                st.query_params["floor"] = "4-etaj"
-                send_successful_login_alert()
-                st.rerun()
-            # 3-etaj paroli
-            elif password_clean == st.secrets.get("password_3etaj", "3etaj"):
-                reset_login_attempts()
-                st.session_state["password_correct"] = True
-                st.session_state["current_floor"] = "3-etaj"
-                st.query_params["auth"] = "ok"
-                st.query_params["floor"] = "3-etaj"
-                send_successful_login_alert()
-                st.rerun()
-            else:
-                record_failed_login()
-                st.error("😕 Parol xato! Qaytadan urinib ko'ring.")
-                st.rerun()
-                
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            password = st.text_input("Parol", type="password")
+            if st.form_submit_button("🚀 Kirish", use_container_width=True):
+                password_clean = password.strip()
+                if password_clean == st.secrets.get("admin_password", "admin123"):
+                    st.session_state.update({"password_correct": True, "is_admin": True, "current_floor": "admin"})
+                    st.query_params.update({"auth": "ok", "floor": "admin", "role": "admin"})
+                    st.rerun()
+                for f_id, f_config in FLOOR_CONFIG.items():
+                    if password_clean == f_config.get("password"):
+                        st.session_state.update({"password_correct": True, "is_admin": False, "current_floor": f_id})
+                        st.query_params.update({"auth": "ok", "floor": f_id, "role": "user"})
+                        st.rerun()
+                st.error("😕 Parol xato!")
     return False
 
 if not check_password():
     st.stop()
 
-def get_sheet_name():
-    """Joriy etajning Google Sheet nomini olish"""
-    config = get_current_config()
-    return config.get("sheet_name", GOOGLE_SHEET_NAME)
-
-def get_main_sheet():
-    sheet_name = get_sheet_name()
-    return get_client().open(sheet_name).sheet1
-
-def get_queue_sheet():
-    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
-    client = get_client()
-    # Joriy etajning Sheet nomini olish
-    current_floor = get_current_floor()
-    sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
-    try:
-        return client.open(sheet_name).worksheet("SMS_QUEUE")
-    except:
-        # SMS_QUEUE sahifasi yo'q bo'lsa, yaratish
-        ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
-        ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
-        return ws
-
-def validate_phone(phone):
-    """Telefon raqamini tekshirish va tozalash"""
-    if not phone:
-        return None
-    phone = str(phone).replace("+", "").replace(" ", "").replace("-", "")
-    phone = phone.replace("(", "").replace(")", "").replace(".0", "")
-    phone = ''.join(filter(str.isdigit, phone))
-    if len(phone) < 9:
-        return None
-    if len(phone) == 9:
-        phone = "998" + phone
-    return phone
-
-def add_to_sms_queue(queue_sheet, phone, message, student_name=""):
-    """SMS navbatiga xavfsiz qo'shish"""
-    clean_phone = validate_phone(phone)
-    if not clean_phone:
-        return False
-    timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-    # Endi ETAJ ustuni kerak emas - har bir etaj o'z sheet'ida
-    queue_sheet.append_row([clean_phone, message, "PENDING", timestamp, student_name])
-    return True
-
 # --- MA'LUMOTNI O'QISH ---
 try:
     sheet = get_main_sheet()
-    
-    # get_all_records() o'rniga get_all_values() ishlatamiz (duplicate header muammosi uchun)
     all_values = sheet.get_all_values()
-    
     if not all_values:
         st.error("Jadval bo'sh!")
         st.stop()
-        
-    # Headerlarni olish
     headers = all_values[0]
-    
-    # Bugungi sana headerda bormi?
-    # Dublikatlarni tekshirish va to'g'irlash
     unique_headers = []
     seen = {}
-    
     for h in headers:
         if h in seen:
             seen[h] += 1
@@ -881,62 +414,32 @@ try:
         else:
             seen[h] = 0
             unique_headers.append(h)
-            
-    # DataFrame yaratish
     df = pd.DataFrame(all_values[1:], columns=unique_headers)
-    
-    # Telefon raqamini tozalash
     if 'telefon raqami' in df.columns:
         df['telefon raqami'] = df['telefon raqami'].astype(str).str.replace(".0", "", regex=False)
 except Exception as e:
-    st.error(f"Google Sheetga ulanishda xatolik: {e}")
+    st.error(f"❌ Google Sheetga ulanishda xatolik: {e}")
     st.stop()
 
-# --- ZAMONAVIY HEADER ---
+# --- HEADER ---
 current_config = get_current_config()
 floor_name = current_config.get("name", "4-etaj")
 
 st.markdown(f"""
-<div style="
-    background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(0, 212, 170, 0.3);
-    border-radius: 20px;
-    padding: 25px 40px;
-    margin-bottom: 25px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);
-">
+<div style="background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);">
     <div>
-        <h1 style="
-            margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-            background: linear-gradient(145deg, #ffffff, #00D4AA);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        ">🏢 Navbatchilik Tizimi</h1>
-        <p style="
-            margin: 5px 0 0 0;
-            color: #888;
-            font-size: 14px;
-        ">TTJ Yotoqxona Boshqaruv Paneli</p>
+        <h1 style="margin: 0; font-size: 28px; font-weight: 800; background: linear-gradient(145deg, #ffffff, #00D4AA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
+        <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
     </div>
-    <div style="
-        background: linear-gradient(145deg, #00D4AA, #00B894);
-        padding: 12px 25px;
-        border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);
-    ">
-        <span style="
-            color: #0a0a0a;
-            font-weight: 700;
-            font-size: 16px;
-        ">📍 {floor_name}</span>
+    <div style="display: flex; gap: 15px; align-items: center;">
+        <div style="background: linear-gradient(145deg, #00D4AA, #00B894); padding: 12px 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);">
+            <span style="color: #0a0a0a; font-weight: 700; font-size: 16px;">📍 {floor_name}</span>
+        </div>
+        <a href="?action=logout" target="_self" style="text-decoration: none;">
+            <div style="background: rgba(255, 87, 51, 0.15); border: 1px solid rgba(255, 87, 51, 0.4); color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <span>🚪</span><span>CHIQISH</span>
+            </div>
+        </a>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1109,30 +612,40 @@ if "active_menu" not in st.session_state:
 if "menu" in st.query_params:
     st.session_state.active_menu = st.query_params["menu"]
 
-# Streamlit radio orqali ham navigatsiya (fallback)
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    if st.button("📝 Navbatchilik", use_container_width=True, 
-                 type="primary" if st.session_state.active_menu == "navbatchilik" else "secondary"):
-        st.session_state.active_menu = "navbatchilik"
-        st.rerun()
-with col2:
-    if st.button("🛠️ Naryad", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "naryad" else "secondary"):
-        st.session_state.active_menu = "naryad"
-        st.rerun()
-with col3:
-    if st.button("📊 Statistika", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "statistika" else "secondary"):
-        st.session_state.active_menu = "statistika"
-        st.rerun()
-with col4:
-    if st.button("📨 Xabarlar", use_container_width=True,
-                 type="primary" if st.session_state.active_menu == "xabar" else "secondary"):
-        st.session_state.active_menu = "xabarlar"
-        st.rerun()
-
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+# 3D MENYU KARTALARI
+st.markdown(f"""
+<div class="menu-container">
+    <a href="?menu=navbatchilik" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'navbatchilik' else ''}">
+            <span class="menu-icon">📝</span>
+            <p class="menu-title">Navbatchilik</p>
+            <p class="menu-desc">Kunlik navbatchilar</p>
+        </div>
+    </a>
+    <a href="?menu=naryad" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'naryad' else ''}">
+            <span class="menu-icon">🛠️</span>
+            <p class="menu-title">Naryad</p>
+            <p class="menu-desc">Jazo va qo'shimcha</p>
+        </div>
+    </a>
+    <a href="?menu=statistika" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'statistika' else ''}">
+            <span class="menu-icon">📊</span>
+            <p class="menu-title">Statistika</p>
+            <p class="menu-desc">Umumiy hisobotlar</p>
+        </div>
+    </a>
+    <a href="?menu=xabarlar" target="_self" style="text-decoration: none;">
+        <div class="menu-card {'active' if st.session_state.active_menu == 'xabarlar' else ''}">
+            <span class="menu-icon">📨</span>
+            <p class="menu-title">Xabarlar</p>
+            <p class="menu-desc">SMS yuborish</p>
+        </div>
+    </a>
+</div>
+<div class="section-divider"></div>
+""", unsafe_allow_html=True)
 
 # --- NAVBATCHILIK SAHIFASI ---
 if st.session_state.active_menu == "navbatchilik":

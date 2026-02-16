@@ -1,7 +1,7 @@
 {
-    "version": "1.6.4",
-    "versionCode": 13,
-    "releaseNotes": "Tuzatish: Google Sheets xatoligi bartaraf etildi va Telegram guruh sozlamalari yangilandi.",
+    "version": "1.6.5",
+    "versionCode": 14,
+    "releaseNotes": "Tuzatish: Google Sheets dinamik sozlamalar, SMS navbati avtomatik yaratilishi va yangi 3D dizayn qo'shildi.",
     "downloadUrl": "https://github.com/orifxonmarufxonov24-boop/Navbatchilik/releases/latest/download/app-release.apk",
     "forceUpdate": false
 }
