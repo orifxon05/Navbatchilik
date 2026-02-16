@@ -251,6 +251,63 @@ def log_activity(action, details):
     except:
         pass
 
+# Xavfsizlik sozlamalari
+MAX_LOGIN_ATTEMPTS = 5
+BLOCK_TIME_MINUTES = 30
+ALERT_THRESHOLD = 3
+
+def get_security_state():
+    """Xavfsizlik holatini olish"""
+    if "login_attempts" not in st.session_state:
+        st.session_state.login_attempts = 0
+    if "blocked_until" not in st.session_state:
+        st.session_state.blocked_until = None
+    if "last_attempt_time" not in st.session_state:
+        st.session_state.last_attempt_time = None
+    return st.session_state
+
+def is_blocked():
+    """Foydalanuvchi bloklangan yoki yo'qligini tekshirish"""
+    state = get_security_state()
+    if state.blocked_until:
+        if datetime.now() < state.blocked_until:
+            return True
+        else:
+            state.blocked_until = None
+            state.login_attempts = 0
+    return False
+
+def record_failed_login():
+    """Muvaffaqiyatsiz kirishni qayd qilish"""
+    state = get_security_state()
+    state.login_attempts += 1
+    state.last_attempt_time = datetime.now()
+    
+    if state.login_attempts >= ALERT_THRESHOLD:
+        send_security_alert(state.login_attempts)
+    
+    if state.login_attempts >= MAX_LOGIN_ATTEMPTS:
+        state.blocked_until = datetime.now() + timedelta(minutes=BLOCK_TIME_MINUTES)
+        send_block_alert()
+
+def reset_login_attempts():
+    """Muvaffaqiyatli kirishdan keyin urinishlarni tozalash"""
+    state = get_security_state()
+    state.login_attempts = 0
+    state.blocked_until = None
+
+def send_security_alert(attempts):
+    """Xavfsizlik ogohlantirishi yuborish"""
+    tashkent_time = (datetime.now() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+    msg = f"🚨 XAVFSIZLIK OGOHLANTIRISHI!\n\n⚠️ Shubhali faoliyat aniqlandi!\n📊 Noto'g'ri parol urinishlari: {attempts}\n🕐 Vaqt: {tashkent_time}"
+    send_telegram_alert(msg)
+
+def send_block_alert():
+    """Bloklash haqida xabar yuborish"""
+    tashkent_time = (datetime.now() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+    msg = f"🔒 FOYDALANUVCHI BLOKLANDI!\n\n❌ {MAX_LOGIN_ATTEMPTS} marta noto'g'ri parol kiritildi\n⏱️ Bloklash muddati: {BLOCK_TIME_MINUTES} daqiqa\n🕐 Vaqt: {tashkent_time}"
+    send_telegram_alert(msg)
+
 # --- KONFIGURATSIYA ---
 GOOGLE_SHEET_NAME = "Navbatchilik_Jadvali"
 
@@ -358,7 +415,10 @@ def check_password():
         return True
     
     if is_blocked():
-        st.error("🔒 Siz bloklangansiz! Keyinroq urinib ko'ring.")
+        state = get_security_state()
+        remaining = state.blocked_until - datetime.now()
+        minutes_left = int(remaining.total_seconds() / 60) + 1
+        st.error(f"🔒 Siz {minutes_left} daqiqaga bloklangansiz! Keyinroq urinib ko'ring.")
         return False
 
     import base64
@@ -376,6 +436,13 @@ def check_password():
     
     st.markdown("""<div style="text-align: center; margin-top: 15vh;"><p style="color: #4FC3F7; font-size: 32px;">🔒 Tizimga kirish</p></div>""", unsafe_allow_html=True)
     
+    # Qolgan urinishlar haqida ogohlantirish
+    state = get_security_state()
+    if state.login_attempts > 0:
+        remaining_attempts = MAX_LOGIN_ATTEMPTS - state.login_attempts
+        if remaining_attempts <= 3:
+            st.warning(f"⚠️ Qolgan urinishlar: {remaining_attempts}")
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("login_form"):
@@ -383,15 +450,20 @@ def check_password():
             if st.form_submit_button("🚀 Kirish", use_container_width=True):
                 password_clean = password.strip()
                 if password_clean == st.secrets.get("admin_password", "admin123"):
+                    reset_login_attempts()
                     st.session_state.update({"password_correct": True, "is_admin": True, "current_floor": "admin"})
                     st.query_params.update({"auth": "ok", "floor": "admin", "role": "admin"})
                     st.rerun()
                 for f_id, f_config in FLOOR_CONFIG.items():
                     if password_clean == f_config.get("password"):
+                        reset_login_attempts()
                         st.session_state.update({"password_correct": True, "is_admin": False, "current_floor": f_id})
                         st.query_params.update({"auth": "ok", "floor": f_id, "role": "user"})
                         st.rerun()
+                
+                record_failed_login()
                 st.error("😕 Parol xato!")
+                st.rerun()
     return False
 
 if not check_password():
