@@ -521,9 +521,39 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- NAVIGATSIYA ---
-auth_params = f"auth={st.query_params.get('auth', '')}&floor={st.query_params.get('floor', '')}&role={st.query_params.get('role', '')}"
+# Session state'da active menyu
+if "active_menu" not in st.session_state:
+    st.session_state.active_menu = "navbatchilik"
 
+# Query param orqali menyuni aniqlash
+if "menu" in st.query_params:
+    st.session_state.active_menu = st.query_params["menu"]
+
+# Admin uchun qavat tanlash imkoniyati
+if st.session_state.get("is_admin", False):
+    with st.sidebar:
+        st.markdown("### 🏢 Boshqaruv Paneli")
+        st.info("Siz adminsiz! Barcha qavatlarni ko'ra olasiz.")
+        
+        floor_options = list(FLOOR_CONFIG.keys())
+        current_f = st.session_state.get("current_floor", "admin")
+        
+        # Agar current_floor "admin" bo'lsa, uni birinchi floorga o'tkazamiz (tanlash uchun)
+        if current_f == "admin" and floor_options:
+            current_f = floor_options[0]
+            st.session_state.current_floor = current_f
+            
+        selected_floor = st.selectbox(
+            "Qavatni tanlang", 
+            options=floor_options,
+            index=floor_options.index(current_f) if current_f in floor_options else 0
+        )
+        
+        if selected_floor != st.session_state.get("current_floor"):
+            st.session_state.current_floor = selected_floor
+            st.rerun()
+
+# --- NAVIGATSIYA ---
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     if st.button("📝 Navbatchilik", use_container_width=True, 
