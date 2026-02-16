@@ -1,6 +1,6 @@
 /*
  * NAVBATCHILIK - Orifxon Marufxonov
- * v1.3.0 - Optimallashtirish
+ * v1.3.1 - Optimallashtirish va dizayn yangilanishi
  */
 package com.navbatchilik.app;
 
