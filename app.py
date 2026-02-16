@@ -179,14 +179,19 @@ def get_or_create_spreadsheet(sheet_name):
             send_telegram_alert(f"🆕 YANGI BAZA YARATILDI!\n\n🏢 Qavat: {sheet_name}\n📂 Fayl Google Drive'da avtomatik ochildi.")
             return sh
         except Exception as create_error:
-            # Agar yaratishda xatolik bo'lsa (masalan Quota Exceeded), foydalanuvchiga yechimni ko'rsatamiz.
+            # Agar yaratishda xatolik bo'lsa (masalan Quota Exceeded), demak fayl yo'q va biz yarata olmadik.
+            # Foydalanuvchiga aniq yechimni ko'rsatamiz.
             sa_email = "bot-user@ornate-course-481512-n2.iam.gserviceaccount.com"
+            
             st.error(f"❌ XATOLIK: '{sheet_name}' fayli topilmadi!")
             st.warning("⚠️ Bot yangi fayl yaratmoqchi bo'ldi, lekin Google Drive xotirangiz to'lgan (Quota Exceeded).")
+            
             st.info(f"✅ YECHIM: Iltimos, Google Drive'da '{sheet_name}' nomli Excel fayl yarating va unga quyidagi emailni 'Editor' qilib qo'shing:")
             st.code(sa_email, language="text")
+            
             st.caption("Fayl nomini to'g'ri yozganingizga ishonch hosil qiling (katta-kichik harflar bir xil bo'lishi kerak).")
             st.stop()
+            # raise Exception(f"Yangi baza yaratishda xatolik: {create_error}")
 
 def get_main_sheet():
     sheet_name = get_sheet_name()
@@ -194,19 +199,26 @@ def get_main_sheet():
     return sh.sheet1
 
 def get_queue_sheet():
-    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi"""
+    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
     client = get_client()
+    # Joriy etajning Sheet nomini olish
+    current_floor = get_current_floor()
+    # Agar current_floor bo'lmasa yoki config bo'sh bo'lsa default
     try:
-        sheet_name = get_sheet_name()
+        sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
+    except:
+        sheet_name = GOOGLE_SHEET_NAME
+
+    try:
         return client.open(sheet_name).worksheet("SMS_QUEUE")
     except:
+        # SMS_QUEUE sahifasi yo'q bo'lsa, yaratish
         try:
-            sheet_name = get_sheet_name()
             ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
             ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
             return ws
         except:
-             return None
+             return None # Agar yaratib bo'lmasa
 
 def validate_phone(phone):
     """Telefon raqamini tekshirish va tozalash"""
@@ -223,38 +235,24 @@ def validate_phone(phone):
 
 def add_to_sms_queue(queue_sheet, phone, message, student_name=""):
     """SMS navbatiga xavfsiz qo'shish"""
+    if not queue_sheet: return False
+    
     clean_phone = validate_phone(phone)
     if not clean_phone:
         return False
     timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-    # Endi ETAJ ustuni kerak emas - har bir etaj o'z sheet'ida
     queue_sheet.append_row([clean_phone, message, "PENDING", timestamp, student_name])
     return True
 
-def log_activity(action, details):
-    """Admin harakatlarini LOG worksheetda saqlash"""
-    try:
-        client = get_client()
-        current_floor = get_current_floor()
-        sheet_name = FLOOR_CONFIG.get(current_floor, {}).get("sheet_name")
-        if not sheet_name: return
-        
-        sh = client.open(sheet_name)
-        try:
-            log_ws = sh.worksheet("ACTIVITY_LOG")
-        except:
-            log_ws = sh.add_worksheet("ACTIVITY_LOG", 1000, 4)
-            log_ws.append_row(["VAQT", "ETAJ", "HARAKAT", "DETAL"])
-            
-        timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-        log_ws.append_row([timestamp, current_floor, action, details])
-    except:
-        pass
+# ============================================================================
+# XAVFSIZLIK TIZIMI / SECURITY SYSTEM
+# Copyright (c) 2024 Orifxon Marufxonov
+# ============================================================================
 
 # Xavfsizlik sozlamalari
-MAX_LOGIN_ATTEMPTS = 5
-BLOCK_TIME_MINUTES = 30
-ALERT_THRESHOLD = 3
+MAX_LOGIN_ATTEMPTS = 5  # Maksimal urinishlar soni
+BLOCK_TIME_MINUTES = 30  # Bloklash vaqti (daqiqa)
+ALERT_THRESHOLD = 3  # Ogohlantirishdan oldin urinishlar
 
 def get_security_state():
     """Xavfsizlik holatini olish"""
@@ -273,6 +271,7 @@ def is_blocked():
         if datetime.now() < state.blocked_until:
             return True
         else:
+            # Bloklash muddati tugadi
             state.blocked_until = None
             state.login_attempts = 0
     return False
@@ -283,9 +282,11 @@ def record_failed_login():
     state.login_attempts += 1
     state.last_attempt_time = datetime.now()
     
+    # Ogohlantirishni yuborish
     if state.login_attempts >= ALERT_THRESHOLD:
         send_security_alert(state.login_attempts)
     
+    # Maksimal urinishlardan oshsa bloklash
     if state.login_attempts >= MAX_LOGIN_ATTEMPTS:
         state.blocked_until = datetime.now() + timedelta(minutes=BLOCK_TIME_MINUTES)
         send_block_alert()
@@ -298,15 +299,107 @@ def reset_login_attempts():
 
 def send_security_alert(attempts):
     """Xavfsizlik ogohlantirishi yuborish"""
-    tashkent_time = (datetime.now() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-    msg = f"🚨 XAVFSIZLIK OGOHLANTIRISHI!\n\n⚠️ Shubhali faoliyat aniqlandi!\n📊 Noto'g'ri parol urinishlari: {attempts}\n🕐 Vaqt: {tashkent_time}"
+    tashkent_time = (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+    msg = f"""🚨 XAVFSIZLIK OGOHLANTIRISHI!
+
+⚠️ Shubhali faoliyat aniqlandi!
+📊 Noto'g'ri parol urinishlari: {attempts}
+🕐 Vaqt: {tashkent_time} (Toshkent)
+
+Agar bu siz bo'lmasangiz, parolni o'zgartiring!"""
     send_telegram_alert(msg)
 
 def send_block_alert():
     """Bloklash haqida xabar yuborish"""
-    tashkent_time = (datetime.now() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-    msg = f"🔒 FOYDALANUVCHI BLOKLANDI!\n\n❌ {MAX_LOGIN_ATTEMPTS} marta noto'g'ri parol kiritildi\n⏱️ Bloklash muddati: {BLOCK_TIME_MINUTES} daqiqa\n🕐 Vaqt: {tashkent_time}"
+    tashkent_time = (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+    msg = f"""🔒 FOYDALANUVCHI BLOKLANDI!
+
+❌ {MAX_LOGIN_ATTEMPTS} marta noto'g'ri parol kiritildi
+⏱️ Bloklash muddati: {BLOCK_TIME_MINUTES} daqiqa
+🕐 Vaqt: {tashkent_time} (Toshkent)
+
+Ehtimol brute-force hujumi!"""
     send_telegram_alert(msg)
+
+def get_tashkent_time():
+    """Toshkent vaqtini olish (UTC+5)"""
+    return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+
+def get_device_type():
+    """Qurilma turini aniqlash"""
+    try:
+        from streamlit.web.server.websocket_headers import _get_websocket_headers
+        headers = _get_websocket_headers()
+        user_agent = headers.get("User-Agent", "").lower() if headers else ""
+        
+        if "android" in user_agent or "mobile" in user_agent:
+            return "📱 Mobil ilova"
+        elif "iphone" in user_agent or "ipad" in user_agent:
+            return "🍎 iOS qurilma"
+        else:
+            return "💻 Kompyuter/Brauzer"
+    except:
+        return "🌐 Noma'lum qurilma"
+
+def send_successful_login_alert():
+    """Muvaffaqiyatli kirish haqida xabar"""
+    device = get_device_type()
+    tashkent_time = get_tashkent_time()
+    
+    # Joriy etaj nomini olish
+    floor = st.session_state.get("current_floor", "4-etaj")
+    floor_name = FLOOR_CONFIG.get(floor, {}).get("name", floor)
+    
+    msg = f"""✅ TIZIMGA KIRISH
+
+🏢 Etaj: {floor_name}
+🕐 Vaqt: {tashkent_time} (Toshkent)
+{device}
+
+Agar bu siz bo'lmasangiz - darhol parolni o'zgartiring!"""
+    send_telegram_alert(msg)
+
+def log_activity(action, details=""):
+    """Muhim faoliyatni qayd qilish va xabar yuborish"""
+    tashkent_time = get_tashkent_time()
+    msg = f"""📋 FAOLIYAT LOGI
+
+📌 Harakat: {action}
+📝 Tafsilotlar: {details}
+🕐 Vaqt: {tashkent_time} (Toshkent)"""
+    send_telegram_alert(msg)
+
+def send_telegram_to_student(telegram_id, message, student_name=""):
+    """Talabaga shaxsiy Telegram xabar yuborish"""
+    if not telegram_id:
+        return False
+    
+    # telegram_id ni tozalash
+    tg_id = str(telegram_id).replace(".0", "").strip()
+    if not tg_id or tg_id == "nan" or len(tg_id) < 5:
+        return False
+    
+    try:
+        import requests
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        response = requests.post(url, data={
+            "chat_id": tg_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }, timeout=10)
+        
+        if response.status_code == 200:
+            # Muvaffaqiyatli - adminga xabar
+            send_telegram_alert(f"✅ TG: {student_name} ({tg_id}) - xabar yuborildi")
+            return True
+        else:
+            # Xato tafsilotlari
+            error_info = response.json().get('description', 'Noma\'lum xato')
+            send_telegram_alert(f"❌ TG: {student_name} ({tg_id}) - {error_info}")
+            return False
+    except Exception as e:
+        send_telegram_alert(f"❌ TG: {student_name} ({tg_id}) - xato: {str(e)[:50]}")
+        return False
 
 # --- KONFIGURATSIYA ---
 GOOGLE_SHEET_NAME = "Navbatchilik_Jadvali"
@@ -360,22 +453,29 @@ st.set_page_config(
 )
 
 # ============================================================================
-# PREMIUM DIZAYN - Glassmorphism + 3D Effects
+# ZAMONAVIY DIZAYN - Glassmorphism + 3D Tugmalar
 # ============================================================================
 st.markdown("""
 <style>
+    /* ===== ASOSIY RANGLAR ===== */
     :root {
         --primary: #00D4AA;
         --primary-dark: #00B894;
         --accent: #00CEC9;
         --bg-dark: #0a0a0a;
+        --bg-card: rgba(17, 17, 17, 0.8);
         --glass: rgba(255, 255, 255, 0.05);
         --glass-border: rgba(0, 212, 170, 0.3);
         --text: #ffffff;
+        --text-muted: #888888;
     }
-    .stApp { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%); }
     
-    /* Glass Cards */
+    /* ===== UMUMIY STILLAR ===== */
+    .stApp {
+        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
+    }
+    
+    /* ===== GLASSMORPHISM KARTALAR ===== */
     .glass-card {
         background: var(--glass);
         backdrop-filter: blur(20px);
@@ -385,40 +485,1021 @@ st.markdown("""
         padding: 25px;
         margin: 10px 0;
         box-shadow: 0 8px 32px rgba(0, 212, 170, 0.1);
+        transition: all 0.3s ease;
     }
     
-    /* 3D Buttons */
+    .glass-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 15px 40px rgba(0, 212, 170, 0.2);
+        border-color: var(--primary);
+    }
+    
+    /* ===== 3D TUGMALAR ===== */
     .stButton > button {
+        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 12px 30px !important;
+        color: #0a0a0a !important;
+        font-weight: 700 !important;
+        font-size: 15px !important;
+        box-shadow: 
+            0 6px 20px rgba(0, 212, 170, 0.4),
+            0 3px 6px rgba(0, 0, 0, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+        transition: all 0.2s ease !important;
+        text-transform: uppercase !important;
+        letter-spacing: 1px !important;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 
+            0 10px 30px rgba(0, 212, 170, 0.5),
+            0 5px 10px rgba(0, 0, 0, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(1px) !important;
+        box-shadow: 
+            0 2px 10px rgba(0, 212, 170, 0.3),
+            inset 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+    }
+    
+    /* ===== FORM SUBMIT TUGMALARI ===== */
+    .stFormSubmitButton > button {
         background: linear-gradient(145deg, #00D4AA, #00B894) !important;
         border: none !important;
         border-radius: 12px !important;
         color: #0a0a0a !important;
         font-weight: 700 !important;
-        box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
+        box-shadow: 
+            0 6px 20px rgba(0, 212, 170, 0.4),
+            0 3px 6px rgba(0, 0, 0, 0.3) !important;
         transition: all 0.2s ease !important;
     }
-    .stButton > button:hover { transform: translateY(-3px) !important; box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5); }
     
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { background: var(--glass); border-radius: 15px; padding: 5px; gap: 5px; border: 1px solid var(--glass-border); }
-    .stTabs [aria-selected="true"] { background: linear-gradient(145deg, #00D4AA, #00B894) !important; color: #0a0a0a !important; border-radius: 10px; }
+    .stFormSubmitButton > button:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 10px 30px rgba(0, 212, 170, 0.5) !important;
+    }
     
-    /* Menu Cards */
-    .menu-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 30px 0; perspective: 1000px; }
-    @media (max-width: 768px) { .menu-container { grid-template-columns: repeat(2, 1fr); gap: 15px; } }
+    /* ===== TABLAR ===== */
+    .stTabs [data-baseweb="tab-list"] {
+        background: var(--glass);
+        border-radius: 15px;
+        padding: 5px;
+        gap: 5px;
+        border: 1px solid var(--glass-border);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px;
+        color: var(--text-muted);
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(145deg, #00D4AA, #00B894) !important;
+        color: #0a0a0a !important;
+    }
+    
+    /* ===== INPUT MAYDONLARI ===== */
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div,
+    .stMultiSelect > div > div {
+        background: var(--glass) !important;
+        border: 1px solid var(--glass-border) !important;
+        border-radius: 10px !important;
+        color: var(--text) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stTextInput > div > div > input:focus {
+        border-color: var(--primary) !important;
+        box-shadow: 0 0 20px rgba(0, 212, 170, 0.3) !important;
+    }
+    
+    /* ===== JADVALLAR ===== */
+    .stDataFrame {
+        background: var(--glass) !important;
+        border-radius: 15px !important;
+        border: 1px solid var(--glass-border) !important;
+        overflow: hidden;
+    }
+    
+    /* ===== METRIKALAR ===== */
+    [data-testid="stMetricValue"] {
+        font-size: 2.5rem !important;
+        font-weight: 800 !important;
+        background: linear-gradient(145deg, #00D4AA, #00CEC9);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        color: var(--text-muted) !important;
+        font-weight: 500 !important;
+    }
+    
+    /* ===== SARLAVHALAR ===== */
+    h1, h2, h3 {
+        background: linear-gradient(145deg, #ffffff, #00D4AA);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 800 !important;
+    }
+    
+    /* ===== SIDEBAR ===== */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0a0a0a 0%, #1a1a2e 100%) !important;
+        border-right: 1px solid var(--glass-border) !important;
+    }
+    
+    /* ===== EXPANDER ===== */
+    .streamlit-expanderHeader {
+        background: var(--glass) !important;
+        border: 1px solid var(--glass-border) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* ===== INFO/WARNING/ERROR ===== */
+    .stAlert {
+        background: var(--glass) !important;
+        border: 1px solid var(--glass-border) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* ===== GLOW EFFEKT ===== */
+    .glow-text {
+        text-shadow: 0 0 20px rgba(0, 212, 170, 0.5);
+    }
+    
+    /* ===== ANIMATSIYALAR ===== */
+    @keyframes pulse {
+        0%, 100% { box-shadow: 0 0 20px rgba(0, 212, 170, 0.3); }
+        50% { box-shadow: 0 0 40px rgba(0, 212, 170, 0.6); }
+    }
+    
+    .pulse-glow {
+        animation: pulse 2s infinite;
+    }
+    
+    /* ===== MICRO-ANIMATSIYALAR ===== */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    @keyframes slideIn {
+        from { opacity: 0; transform: translateX(-30px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+    
+    @keyframes scaleIn {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+    
+    @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+    
+    /* Animatsiya klasslari */
+    .animate-fade { animation: fadeIn 0.5s ease-out; }
+    .animate-slide { animation: slideIn 0.4s ease-out; }
+    .animate-scale { animation: scaleIn 0.3s ease-out; }
+    .animate-float { animation: float 3s ease-in-out infinite; }
+    
+    /* Hover effektlari */
+    .hover-lift {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .hover-lift:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 20px 40px rgba(0, 212, 170, 0.3);
+    }
+    
+    /* Click effekti */
+    .click-effect:active {
+        transform: scale(0.95);
+        transition: transform 0.1s;
+    }
+    
+    /* ===== GLASSMORPHISM YAXSHILANGAN ===== */
+    .glass-premium {
+        background: linear-gradient(135deg, 
+            rgba(255, 255, 255, 0.1) 0%, 
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(0, 212, 170, 0.05) 100%);
+        backdrop-filter: blur(25px) saturate(180%);
+        -webkit-backdrop-filter: blur(25px) saturate(180%);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 24px;
+        box-shadow: 
+            0 8px 32px rgba(0, 0, 0, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1),
+            0 0 0 1px rgba(0, 212, 170, 0.1);
+    }
+    
+    /* ===== ZEBRA STRIPING JADVALLAR ===== */
+    [data-testid="stDataFrame"] table tbody tr:nth-child(odd) {
+        background: rgba(0, 212, 170, 0.05) !important;
+    }
+    
+    [data-testid="stDataFrame"] table tbody tr:nth-child(even) {
+        background: rgba(0, 0, 0, 0.2) !important;
+    }
+    
+    [data-testid="stDataFrame"] table tbody tr:hover {
+        background: rgba(0, 212, 170, 0.15) !important;
+        transition: background 0.2s ease;
+    }
+    
+    [data-testid="stDataFrame"] table thead tr {
+        background: linear-gradient(145deg, rgba(0, 212, 170, 0.2), rgba(0, 206, 201, 0.1)) !important;
+    }
+    
+    [data-testid="stDataFrame"] table th {
+        color: #00D4AA !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid rgba(0, 212, 170, 0.3) !important;
+    }
+    
+    /* ===== SCROLL BAR ===== */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: var(--bg-dark);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: var(--primary);
+        border-radius: 10px;
+    }
+    
+    /* ===== 📱 MOBIL RESPONSIVE ===== */
+    @media (max-width: 768px) {
+        /* Tugmalar kichikroq */
+        .stButton > button {
+            padding: 10px 15px !important;
+            font-size: 12px !important;
+            letter-spacing: 0.5px !important;
+        }
+        
+        /* Sarlavhalar kichikroq */
+        h1 { font-size: 1.5rem !important; }
+        h2 { font-size: 1.2rem !important; }
+        h3 { font-size: 1rem !important; }
+        
+        /* Metrikalar kichikroq */
+        [data-testid="stMetricValue"] {
+            font-size: 1.8rem !important;
+        }
+        
+        /* Kolonlar vertikal */
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        
+        /* Padding kamroq */
+        .block-container {
+            padding: 1rem !important;
+        }
+        
+        /* Kartalar kichikroq */
+        .glass-card, .glass-premium {
+            padding: 15px !important;
+            border-radius: 15px !important;
+        }
+        
+        /* Form elementlari */
+        .stTextInput > div > div > input {
+            font-size: 16px !important; /* iOS zoom oldini olish */
+        }
+    }
+    
+    @media (max-width: 480px) {
+        /* Juda kichik ekranlar */
+        .stButton > button {
+            padding: 8px 12px !important;
+            font-size: 11px !important;
+        }
+        
+        h1 { font-size: 1.2rem !important; }
+        
+        [data-testid="stMetricValue"] {
+            font-size: 1.5rem !important;
+        }
+    }
+    
+    /* ===== HIDE STREAMLIT BRANDING ===== */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# Check Logout Action
+if st.query_params.get("action") == "logout":
+    st.session_state.clear()
+    st.query_params.clear()
+    st.rerun()
+
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    # URL orqali sessiyani tiklash (Refresh bo'lganda joyida qolish uchun)
+    if st.query_params.get("auth") == "ok":
+        st.session_state["password_correct"] = True
+        
+        # Rol va qavatni tiklash
+        floor = st.query_params.get("floor")
+        role = st.query_params.get("role")
+        
+        if role == "admin":
+            st.session_state["is_admin"] = True
+            st.session_state["current_floor"] = "admin"
+        elif floor:
+            st.session_state["is_admin"] = False
+            st.session_state["current_floor"] = floor
+            
+        return True
+    
+
+    if st.session_state.get("password_correct", False):
+        return True
+    
+    # Bloklash tekshiruvi
+    if is_blocked():
+        state = get_security_state()
+        remaining = state.blocked_until - datetime.now()
+        minutes_left = int(remaining.total_seconds() / 60) + 1
+        st.error(f"🔒 Siz {minutes_left} daqiqaga bloklangansiz! Keyinroq urinib ko'ring.")
+        st.warning(f"⚠️ Sabab: Juda ko'p noto'g'ri parol urinishlari")
+        return False
+
+    # Rasmni base64 ga o'tkazish
+    import base64
+    with open("login_bg.png", "rb") as f:
+        bg_image = base64.b64encode(f.read()).decode()
+    
+    # Fullscreen background CSS
+    st.markdown(f"""
+    <style>
+        .stApp {{
+            background-image: url("data:image/png;base64,{bg_image}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }}
+        
+        /* Login box styling */
+        .login-box {{
+            background: rgba(0, 0, 0, 0.7);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 400px;
+            margin: 0 auto;
+            margin-top: 5vh;
+        }}
+        
+        .login-title {{
+            color: #4FC3F7;
+            text-align: center;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }}
+        
+        .login-subtitle {{
+            color: #aaa;
+            text-align: center;
+            font-style: italic;
+            margin-bottom: 30px;
+        }}
+        
+        /* Hide Streamlit branding */
+        #MainMenu {{visibility: hidden;}}
+        footer {{visibility: hidden;}}
+        header {{visibility: hidden;}}
+        
+        /* Tepadagi ortiqcha qora qutini yashirish */
+        [data-testid="stHeader"] {{
+            display: none !important;
+        }}
+        
+        /* Bo'sh block containerlarni yashirish */
+        .block-container:empty {{
+            display: none !important;
+        }}
+        
+        /* Sidebar yashirish */
+        section[data-testid="stSidebar"] {{
+            display: none !important;
+        }}
+        
+        /* Birinchi bo'sh elementni yashirish */
+        .main .block-container > div:first-child:empty {{
+            display: none !important;
+        }}
+        
+        /* Streamlit input wrapper */
+        .stTextInput > div:first-child {{
+            background: transparent !important;
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Login sarlavhasi (markazda)
+    st.markdown("""
+    <div style="text-align: center; margin-top: 15vh;">
+        <p style="color: #4FC3F7; font-size: 32px; margin-bottom: 10px;">🔒 Tizimga kirish</p>
+        <p style="color: #aaa; font-style: italic; margin-bottom: 30px;">TTJ Yotoqxona Navbatchilik Tizimi</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Qolgan urinishlar haqida ogohlantirish
+    state = get_security_state()
+    if state.login_attempts > 0:
+        remaining_attempts = MAX_LOGIN_ATTEMPTS - state.login_attempts
+        if remaining_attempts <= 3:
+            st.warning(f"⚠️ Qolgan urinishlar: {remaining_attempts}")
+    
+    # Form (Enter bilan ishlaydi)
+    with st.form("login_form"):
+        password = st.text_input("Parolni kiriting", type="password", placeholder="Parolni kiriting va Enter bosing...", label_visibility="collapsed")
+        submit_button = st.form_submit_button("🚀 Kirish", use_container_width=True)
+
+        if submit_button:
+            # Parollarni tekshirish
+            password_clean = password.strip()
+            
+            # --- ADMIN LOGIN ---
+            if password_clean == "admin05":
+                reset_login_attempts()
+                st.session_state["password_correct"] = True
+                st.session_state["is_admin"] = True
+                st.session_state["current_floor"] = "admin"
+                # URL ga to'g'ri ma'lumot yozish
+                st.query_params["auth"] = "ok"
+                st.query_params["floor"] = "admin"
+                st.query_params["role"] = "admin"
+                send_telegram_alert("🔧 ADMIN PANEL'ga kirish!")
+                st.rerun()
+
+            # --- DYNAMIC FLOOR LOGIN ---
+            found_floor = None
+            for floor_id, config in FLOOR_CONFIG.items():
+                # Password from Google Sheet config
+                if config.get("password") and password_clean == str(config.get("password")):
+                    found_floor = floor_id
+                    break
+            
+            if found_floor:
+                reset_login_attempts()
+                st.session_state["password_correct"] = True
+                st.session_state["is_admin"] = False
+                st.session_state["current_floor"] = found_floor
+                # URL ga to'g'ri ma'lumot yozish
+                st.query_params["auth"] = "ok"
+                st.query_params["floor"] = found_floor
+                st.query_params["role"] = "user"
+                send_successful_login_alert()
+                st.rerun()
+            else:
+                record_failed_login()
+                st.error("😕 Parol xato! Qaytadan urinib ko'ring.")
+                st.rerun()
+                
+    return False
+
+if not check_password():
+    st.stop()
+
+# ============================================================================
+# ADMIN PANEL
+# ============================================================================
+if st.session_state.get("is_admin", False):
+    # --- HEADER & NAVIGATION ---
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(255, 87, 51, 0.1) 0%, rgba(251, 133, 0, 0.1) 100%);
+            border-radius: 15px;
+            padding: 15px 25px;
+            border: 1px solid rgba(255, 87, 51, 0.3);
+        ">
+            <h2 style="color: #FF5733; margin: 0;">🔧 ADMIN PANEL</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.write("") # Spacing
+        if st.button("🚪 Tizimdan Chiqish", type="secondary", use_container_width=True):
+            st.session_state.clear()
+            st.query_params.clear()
+            st.rerun()
+            
+    # Qavatlarga o'tish
+    with st.expander("👁️ Qavat ko'rinishiga o'tish (Saytni ko'rish)"):
+        f_cols = st.columns(len(FLOOR_CONFIG))
+        for i, (f_id, f_conf) in enumerate(FLOOR_CONFIG.items()):
+            c_idx = i % 4 # Max 4 columns
+            with f_cols[c_idx]:
+                if st.button(f"🏠 {f_conf['name']}", key=f"nav_to_{f_id}", use_container_width=True):
+                    st.session_state["is_admin"] = False
+                    st.session_state["current_floor"] = f_id
+                    
+                    # URL parametrlarini yangilash (Parolsiz kirish uchun)
+                    st.query_params["auth"] = "ok"
+                    st.query_params["floor"] = f_id
+                    st.query_params["role"] = "user"
+                    
+                    st.rerun()
+    
+    st.write("---")
+    
+    # Initialize Settings Sheet just in case
+    init_settings_sheet()
+    
+    tab1, tab2, tab3 = st.tabs(["🏢 QAVATLAR SOZLAMALARI", "📤 TALABALAR YUKLASH", "📝 MA'LUMOTLARNI TAHRIRLASH"])
+    
+    with tab1:
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            st.subheader("⚙️ Qavat Sozlamalari")
+        with col_t2:
+            if st.button("🔄 Yangilash (Cache Clear)", help="Agar o'zgarishlar ko'rinmasa, shu tugmani bosing"):
+                st.cache_data.clear()
+                st.rerun()
+        st.subheader("⚙️ Qavatlar Konfiguratsiyasi")
+        st.info("Jadval ichidagi ma'lumotlarni o'zgartirib, pastdagi 'Saqlash' tugmasini bosing.")
+        
+        # Load current settings from sheet
+        try:
+            client = get_client()
+            settings_ws = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
+            data = settings_ws.get_all_values() # get_all_records o'rniga values ishlatamiz xavfsizlik uchun
+            
+            if len(data) > 0:
+                header = data[0]
+                rows = data[1:]
+                df_settings = pd.DataFrame(rows, columns=header)
+                
+                # DATA EDITOR - Tahrirlash uchun
+                edited_settings = st.data_editor(
+                    df_settings, 
+                    num_rows="dynamic", 
+                    use_container_width=True,
+                    key="settings_editor"
+                )
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("💾 Sozlamalarni Saqlash", type="primary"):
+                        try:
+                            # Tozalash va yangilash
+                            settings_ws.clear()
+                            
+                            # Header va ma'lumotlarni birlashtirish
+                            new_data = [edited_settings.columns.tolist()] + edited_settings.astype(str).values.tolist()
+                            settings_ws.update(values=new_data)
+                            
+                            st.success("✅ Sozlamalar yangilandi!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Saqlashda xatolik: {e}")
+            else:
+                st.warning("Sozlamalar bo'sh yoki o'qib bo'lmadi.")
+
+        except Exception as e:
+            st.error(f"Sozlamalarni yuklashda xatolik: {e}")
+
+    with tab2:
+        st.subheader("📤 Excel Fayl Yuklash")
+        
+        # Dropdown for selecting target floor
+        floor_options = list(FLOOR_CONFIG.keys())
+        target_floor_id = st.selectbox("Qaysi qavatga yuklash kerak?", floor_options, 
+                                     format_func=lambda x: FLOOR_CONFIG[x]["name"] if x in FLOOR_CONFIG else x)
+        
+        if target_floor_id:
+            target_sheet_name = FLOOR_CONFIG[target_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
+            st.info(f"📝 Tanlangan Sheet: **{target_sheet_name}**")
+            
+            uploaded_file = st.file_uploader("Excel faylni yuklang", type=['xlsx', 'xls', 'csv'])
+            
+            if uploaded_file:
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df_upload = pd.read_csv(uploaded_file)
+                    else:
+                        df_upload = pd.read_excel(uploaded_file)
+                        
+                    st.write("Yuklangan ma'lumotlar:", df_upload.head())
+                    st.caption(f"Jami: {len(df_upload)} qator")
+                    
+                    if st.button("🚀 Google Sheets'ga Yozish"):
+                        try:
+                            # Open or create target sheet
+                            sh = get_or_create_spreadsheet(target_sheet_name)
+                            target_ws = sh.sheet1
+                            
+                            # Convert to strings
+                            data_to_upload = df_upload.fillna("").astype(str).values.tolist()
+                            
+                            # Check headers
+                            first_row = target_ws.row_values(1)
+                            if not first_row:
+                                target_ws.append_row(df_upload.columns.tolist())
+                            
+                            # Append rows
+                            target_ws.append_rows(data_to_upload)
+                                
+                            st.success(f"✅ {len(data_to_upload)} qator muvaffaqiyatli qo'shildi!")
+                            send_telegram_alert(f"📤 ADMIN: {len(data_to_upload)} ta talaba yuklandi ({target_sheet_name})")
+                            
+                        except Exception as e:
+                            st.error(f"Google Sheets xatosi: {e}")
+                except Exception as e:
+                    st.error(f"Faylni o'qishda xatolik: {e}")
+
+    with tab3:
+        st.subheader("📝 Talabalar Ro'yxatini Tahrirlash")
+        
+        # Etaj tanlash
+        floor_options_edit = list(FLOOR_CONFIG.keys())
+        edit_floor_id = st.selectbox("Tahrirlash uchun qavatni tanlang", floor_options_edit, 
+                                   format_func=lambda x: FLOOR_CONFIG[x]["name"] if x in FLOOR_CONFIG else x,
+                                   key="edit_floor_select")
+        
+        if edit_floor_id:
+            target_sheet_name = FLOOR_CONFIG[edit_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
+            
+            # Yuklash tugmasi
+            if st.button("🔄 Ma'lumotlarni Yuklash", key="load_data_edit"):
+                st.session_state["data_loaded_for_edit"] = True
+            
+            if st.session_state.get("data_loaded_for_edit", False):
+                try:
+                    # 1. Client olish
+                    client = get_client()
+                    
+                    # 2. Sheetni ochish (yoki yaratish)
+                    try:
+                        sh = get_or_create_spreadsheet(target_sheet_name)
+                    except Exception as sheet_err:
+                        st.error(f"❌ Fayl bilan ishlashda xato: {sheet_err}")
+                        sa_email = "bot-user@ornate-course-481512-n2.iam.gserviceaccount.com"
+                        st.info(f"💡 Agar fayl sizda bo'lsa, uni quyidagi email bilan 'Share' qilganingizni tekshiring: {sa_email}")
+                        st.stop()
+                    
+                    # 3. Worksheetni olish
+                    ws = sh.sheet1
+                    
+                    # 4. Ma'lumotlarni o'qish
+                    try:
+                        data = ws.get_all_values()
+                    except Exception as read_error:
+                        st.error(f"⚠️ Ma'lumotlarni o'qishda muammo: {read_error}")
+                        st.stop()
+                    
+                    if len(data) > 0:
+                        headers = data[0]
+                        rows = data[1:]
+                        
+                        # DataFrame yaratish
+                        unique_headers = []
+                        seen = {}
+                        for h in headers:
+                            h_str = str(h).strip() # Headerlarni tozalash
+                            if h_str in seen:
+                                seen[h_str] += 1
+                                unique_headers.append(f"{h_str}_{seen[h_str]}")
+                            else:
+                                seen[h_str] = 0
+                                unique_headers.append(h_str)
+                        
+                        try:
+                            df_edit = pd.DataFrame(rows, columns=unique_headers)
+                        except Exception as e:
+                            st.error(f"Jadval tuzishda xatolik: {e}")
+                            st.write("Headerlar:", unique_headers)
+                            st.write("Birinchi qator:", rows[0] if rows else "Bo'sh")
+                            st.stop()
+                        
+                        st.subheader(f"📋 {target_sheet_name}")
+                        st.caption(f"Jami talabalar: {len(df_edit)}")
+                        
+                        # Tahrirlash oynasi
+                        edited_df = st.data_editor(
+                            df_edit,
+                            num_rows="dynamic",
+                            use_container_width=True,
+                            key="student_data_editor"
+                        )
+                        
+                        st.warning("⚠️ 'Saqlash' tugmasini bosganingizda Google Sheetdagi ESKI ma'lumotlar o'chib, yangisi yoziladi!")
+                        
+                        if st.button("💾 O'zgarishlarni Saqlash", type="primary", key="save_student_data"):
+                            try:
+                                ws.clear()
+                                # Header va ma'lumotlarni tayyorlash
+                                update_values = [edited_df.columns.tolist()] + edited_df.fillna("").astype(str).values.tolist()
+                                ws.update(values=update_values)
+                                st.success("✅ Ma'lumotlar saqlandi!")
+                                st.balloons()
+                                # Keshni tozalash
+                                st.cache_data.clear()
+                            except Exception as e:
+                                st.error(f"Saqlashda xatolik: {e}")
+                    else:
+                        st.info("Jadval bo'sh.")
+                except Exception as e:
+                    st.error(f"Kutilmagan xatolik: {type(e).__name__} - {e}")
+
+    st.stop() # Stop execution so admin sees only this panel
+
+
+
+
+
+
+
+def get_queue_sheet():
+    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
+    client = get_client()
+    # Joriy etajning Sheet nomini olish
+    current_floor = get_current_floor()
+    sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
+    try:
+        return client.open(sheet_name).worksheet("SMS_QUEUE")
+    except:
+        # SMS_QUEUE sahifasi yo'q bo'lsa, yaratish
+        ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
+        ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
+        return ws
+
+
+
+
+
+
+
+
+
+# --- HEADER & NAVIGATION ---
+current_config = get_current_config()
+floor_name = current_config.get("name", "4-etaj")
+
+# 1. Sidebar (Menyu)
+with st.sidebar:
+    st.title("Menyu")
+    st.write(f"🏢 **{floor_name}**")
+    if st.button("🚪 Tizimdan Chiqish", key="logout_sidebar", type="primary", use_container_width=True):
+        st.session_state.clear()
+        st.query_params.clear()
+        st.rerun()
+
+
+
+# --- MA'LUMOTNI O'QISH ---
+try:
+    sheet = get_main_sheet()
+    
+    # get_all_records() o'rniga get_all_values() ishlatamiz (duplicate header muammosi uchun)
+    all_values = sheet.get_all_values()
+    
+    if not all_values:
+        st.error("Jadval bo'sh!")
+        st.stop()
+        
+    # Headerlarni olish
+    headers = all_values[0]
+    
+    # Bugungi sana headerda bormi?
+    # Dublikatlarni tekshirish va to'g'irlash
+    unique_headers = []
+    seen = {}
+    
+    for h in headers:
+        if h in seen:
+            seen[h] += 1
+            unique_headers.append(f"{h}_{seen[h]}")
+        else:
+            seen[h] = 0
+            unique_headers.append(h)
+            
+    # DataFrame yaratish
+    df = pd.DataFrame(all_values[1:], columns=unique_headers)
+    
+    # Telefon raqamini tozalash
+    if 'telefon raqami' in df.columns:
+        df['telefon raqami'] = df['telefon raqami'].astype(str).str.replace(".0", "", regex=False)
+except Exception as e:
+    import traceback
+    st.error(f"❌ Google Sheetga ulanishda xatolik: {e}")
+    with st.expander("🔍 Texnik tafsilotlar (Debug)"):
+        st.code(traceback.format_exc())
+    st.stop()
+
+st.markdown(f"""
+<div style="background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 206, 201, 0.1) 100%); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 212, 170, 0.15);">
+<div>
+<h1 style="margin: 0; font-size: 28px; font-weight: 800; background: linear-gradient(145deg, #ffffff, #00D4AA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
+<p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
+</div>
+<div style="display: flex; gap: 15px; align-items: center;">
+<div style="background: linear-gradient(145deg, #00D4AA, #00B894); padding: 12px 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4);">
+<span style="color: #0a0a0a; font-weight: 700; font-size: 16px;">📍 {floor_name}</span>
+</div>
+<a href="?action=logout" target="_self" style="text-decoration: none;">
+<div style="background: rgba(255, 87, 51, 0.15); border: 1px solid rgba(255, 87, 51, 0.4); color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: 700; font-size: 16px; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+<span>🚪</span>
+<span>CHIQISH</span>
+</div>
+</a>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ============================================================================
+# 3D KARTALAR BILAN MENYU
+# ============================================================================
+
+# Menyu kartalar uchun CSS
+st.markdown("""
+<style>
+    /* ===== 3D MENYU KARTALARI ===== */
+    .menu-container {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        margin: 30px 0;
+        perspective: 1000px;
+    }
+    
+    @media (max-width: 768px) {
+        .menu-container {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+    }
+    
     .menu-card {
         background: linear-gradient(145deg, rgba(17, 17, 17, 0.9), rgba(30, 30, 30, 0.8));
-        backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 20px;
-        padding: 30px 20px; text-align: center; cursor: pointer; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        transform-style: preserve-3d; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(0, 212, 170, 0.2);
+        border-radius: 20px;
+        padding: 30px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        transform-style: preserve-3d;
+        box-shadow: 
+            0 10px 30px rgba(0, 0, 0, 0.3),
+            0 5px 15px rgba(0, 212, 170, 0.1),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        position: relative;
+        overflow: hidden;
     }
-    .menu-card:hover { transform: translateY(-10px) rotateX(5deg); border-color: var(--primary); }
-    .menu-card.active { background: rgba(0, 212, 170, 0.2); border-color: var(--primary); box-shadow: 0 15px 35px rgba(0, 212, 170, 0.3); }
-    .menu-title { color: white; font-size: 16px; font-weight: bold; margin-top: 10px; }
-    .section-divider { height: 2px; background: linear-gradient(90deg, transparent, var(--primary), transparent); margin: 30px 0; }
     
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    [data-testid="stHeader"] { display: none !important; }
+    .menu-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+            90deg,
+            transparent,
+            rgba(0, 212, 170, 0.2),
+            transparent
+        );
+        transition: left 0.5s;
+    }
+    
+    .menu-card:hover::before {
+        left: 100%;
+    }
+    
+    .menu-card:hover {
+        transform: translateY(-15px) rotateX(10deg) scale(1.02);
+        border-color: rgba(0, 212, 170, 0.6);
+        box-shadow: 
+            0 25px 50px rgba(0, 0, 0, 0.4),
+            0 15px 30px rgba(0, 212, 170, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+    
+    .menu-card.active {
+        background: linear-gradient(145deg, rgba(0, 212, 170, 0.2), rgba(0, 206, 201, 0.15));
+        border-color: rgba(0, 212, 170, 0.8);
+        transform: translateY(-8px);
+        box-shadow: 
+            0 20px 40px rgba(0, 212, 170, 0.25),
+            0 10px 20px rgba(0, 0, 0, 0.3),
+            inset 0 0 30px rgba(0, 212, 170, 0.1);
+    }
+    
+    .menu-icon {
+        font-size: 48px;
+        margin-bottom: 15px;
+        display: block;
+        transform: translateZ(30px);
+        transition: transform 0.3s ease;
+    }
+    
+    .menu-card:hover .menu-icon {
+        transform: translateZ(50px) scale(1.2);
+    }
+    
+    .menu-title {
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .menu-card.active .menu-title {
+        background: linear-gradient(145deg, #00D4AA, #00CEC9);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .menu-desc {
+        color: #888;
+        font-size: 12px;
+        margin-top: 8px;
+    }
+    
+    .menu-badge {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: linear-gradient(145deg, #00D4AA, #00B894);
+        color: #0a0a0a;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 20px;
+        box-shadow: 0 3px 10px rgba(0, 212, 170, 0.4);
+    }
+    
+    /* Glow Effect for Active Card */
+    .menu-card.active::after {
+        content: '';
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(
+            circle at center,
+            rgba(0, 212, 170, 0.1) 0%,
+            transparent 50%
+        );
+        animation: glow-pulse 3s infinite;
+        pointer-events: none;
+    }
+    
+    @keyframes glow-pulse {
+        0%, 100% { opacity: 0.5; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.1); }
+    }
+    
+    /* Section Divider */
+    .section-divider {
+        height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.5), transparent);
+        margin: 30px 0;
+        border-radius: 2px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -430,248 +1511,35 @@ if "active_menu" not in st.session_state:
 if "menu" in st.query_params:
     st.session_state.active_menu = st.query_params["menu"]
 
-# Check Logout Action
-if st.query_params.get("action") == "logout":
-    st.session_state.clear()
-    st.query_params.clear()
-    st.rerun()
-
-def check_password():
-    """Returns `True` if the user had the correct password."""
-    if st.query_params.get("auth") == "ok":
-        st.session_state["password_correct"] = True
-        floor = st.query_params.get("floor")
-        role = st.query_params.get("role")
-        if role == "admin":
-            st.session_state["is_admin"] = True
-            st.session_state["current_floor"] = "admin"
-        elif floor:
-            st.session_state["is_admin"] = False
-            st.session_state["current_floor"] = floor
-        return True
-
-    if st.session_state.get("password_correct", False):
-        return True
-    
-    if is_blocked():
-        state = get_security_state()
-        remaining = state.blocked_until - datetime.now()
-        minutes_left = int(remaining.total_seconds() / 60) + 1
-        st.error(f"🔒 Siz {minutes_left} daqiqaga bloklangansiz! Keyinroq urinib ko'ring.")
-        return False
-
-    import base64
-    bg_image = ""
-    try:
-        with open("login_bg.png", "rb") as f:
-            bg_image = base64.b64encode(f.read()).decode()
-    except: pass
-    
-    st.markdown(f"""
-    <style>
-        .stApp {{ background-image: url("data:image/png;base64,{bg_image}"); background-size: cover; background-position: center; }}
-    </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""<div style="text-align: center; margin-top: 15vh;"><p style="color: #4FC3F7; font-size: 32px;">🔒 Tizimga kirish</p></div>""", unsafe_allow_html=True)
-    
-    # Qolgan urinishlar haqida ogohlantirish
-    state = get_security_state()
-    if state.login_attempts > 0:
-        remaining_attempts = MAX_LOGIN_ATTEMPTS - state.login_attempts
-        if remaining_attempts <= 3:
-            st.warning(f"⚠️ Qolgan urinishlar: {remaining_attempts}")
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_form"):
-            password = st.text_input("Parol", type="password")
-            if st.form_submit_button("🚀 Kirish", use_container_width=True):
-                password_clean = password.strip()
-                if password_clean == st.secrets.get("admin_password", "admin123"):
-                    reset_login_attempts()
-                    st.session_state.update({"password_correct": True, "is_admin": True, "current_floor": "admin"})
-                    st.query_params.update({"auth": "ok", "floor": "admin", "role": "admin"})
-                    st.rerun()
-                for f_id, f_config in FLOOR_CONFIG.items():
-                    if password_clean == f_config.get("password"):
-                        reset_login_attempts()
-                        st.session_state.update({"password_correct": True, "is_admin": False, "current_floor": f_id})
-                        st.query_params.update({"auth": "ok", "floor": f_id, "role": "user"})
-                        st.rerun()
-                
-                record_failed_login()
-                st.error("😕 Parol xato!")
-                st.rerun()
-    return False
-
-if not check_password():
-    st.stop()
-
-# --- MA'LUMOTNI O'QISH ---
-try:
-    sheet = get_main_sheet()
-    all_values = sheet.get_all_values()
-    if not all_values:
-        st.error("Jadval bo'sh!")
-        st.stop()
-    headers = all_values[0]
-    unique_headers = []
-    seen = {}
-    for h in headers:
-        if h in seen:
-            seen[h] += 1
-            unique_headers.append(f"{h}_{seen[h]}")
-        else:
-            seen[h] = 0
-            unique_headers.append(h)
-    df = pd.DataFrame(all_values[1:], columns=unique_headers)
-    if 'telefon raqami' in df.columns:
-        df['telefon raqami'] = df['telefon raqami'].astype(str).str.replace(".0", "", regex=False)
-except Exception as e:
-    st.error(f"❌ Google Sheetga ulanishda xatolik: {e}")
-    st.stop()
-
-# ============================================================================
-# ADMIN PANEL - app_v3.py FUNKSIONALIGI
-# ============================================================================
-if st.session_state.get("is_admin", False):
-    # Admin Header
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(255, 87, 51, 0.1) 0%, rgba(251, 133, 0, 0.1) 100%); border-radius: 15px; padding: 25px; border: 1px solid rgba(255, 87, 51, 0.3); margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(255, 87, 51, 0.1);">
-        <div>
-            <h2 style="color: #FF5733; margin: 0;">🔧 ADMIN PANEL</h2>
-            <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">Tizim va Ma'lumotlar Boshqaruvi</p>
-        </div>
-        <a href="?action=logout" target="_self" style="text-decoration: none; background: rgba(255, 87, 51, 0.15); border: 1px solid #ff5733; color: #ff5733; padding: 12px 25px; border-radius: 12px; font-weight: bold;">🚪 CHIQISH</a>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Qavatlarni Switcher (Tizimni ko'rish)
-    with st.expander("👁️ Foydalanuvchi ko'rinishiga o'tish (Saytni ko'rish)"):
-        f_cols = st.columns(len(FLOOR_CONFIG))
-        for i, (f_id, f_conf) in enumerate(FLOOR_CONFIG.items()):
-            with f_cols[i % 4]:
-                if st.button(f"🏠 {f_conf['name']}", key=f"admin_nav_to_{f_id}", use_container_width=True):
-                    st.session_state["is_admin"] = False
-                    st.session_state["current_floor"] = f_id
-                    st.query_params.update({"auth": "ok", "floor": f_id, "role": "user", "view_mode": "user"})
-                    st.rerun()
-
-    init_settings_sheet()
-    tab1, tab2, tab3 = st.tabs(["🏢 QAVATLAR SOZLAMALARI", "📤 TALABALAR YUKLASH", "📝 MA'LUMOTLARNI TAHRIRLASH"])
-    
-    with tab1:
-        st.subheader("⚙️ Qavat Sozlamalari")
-        st.info("Bu yerda qavat nomlari, parollar va Sheet nomlarini o'zgartirishingiz mumkin.")
-        try:
-            client = get_client()
-            settings_ws = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
-            data = settings_ws.get_all_values()
-            if len(data) > 0:
-                header = data[0]
-                rows = data[1:]
-                df_settings = pd.DataFrame(rows, columns=header)
-                edited_settings = st.data_editor(df_settings, num_rows="dynamic", use_container_width=True, key="admin_settings_editor")
-                if st.button("💾 Sozlamalarni Saqlash", type="primary"):
-                    settings_ws.clear()
-                    new_values = [edited_settings.columns.tolist()] + edited_settings.astype(str).values.tolist()
-                    settings_ws.update(values=new_values)
-                    st.success("✅ Sozlamalar muvaffaqiyatli yangilandi!")
-                    st.cache_data.clear()
-                    st.rerun()
-        except Exception as e: st.error(f"Xatolik: {e}")
-
-    with tab2:
-        st.subheader("📤 Excel Fayl Yuklash")
-        target_f_id = st.selectbox("Qaysi qavatga yuklaymiz?", list(FLOOR_CONFIG.keys()), format_func=lambda x: FLOOR_CONFIG[x]["name"])
-        up_file = st.file_uploader("Faylni tanlang (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
-        if up_file and target_f_id:
-            df_up = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            st.write("Dastlabki 5 qator:", df_up.head())
-            if st.button("🚀 Bazaga Yozish"):
-                try:
-                    target_sh_name = FLOOR_CONFIG[target_f_id].get("sheet_name", GOOGLE_SHEET_NAME)
-                    sh_target = get_or_create_spreadsheet(target_sh_name)
-                    sh_target.sheet1.append_rows(df_up.fillna("").astype(str).values.tolist())
-                    st.success(f"✅ {len(df_up)} ta talaba qo'shildi!")
-                    log_activity("Excel yuklash", f"{target_sh_name} ga {len(df_up)} ta talaba")
-                except Exception as e: st.error(f"Xatolik: {e}")
-
-    with tab3:
-        st.subheader("📝 Talabalar Ma'lumotlarini Tahrirlash")
-        edit_f_id = st.selectbox("Qavatni tanlang", list(FLOOR_CONFIG.keys()), format_func=lambda x: FLOOR_CONFIG[x]["name"], key="edit_f_select")
-        if st.button("🔄 Ma'lumotlarni Yuklash"):
-            try:
-                sh_edit = get_or_create_spreadsheet(FLOOR_CONFIG[edit_f_id]["sheet_name"])
-                st.session_state["admin_edit_data"] = sh_edit.sheet1.get_all_values()
-            except Exception as e: st.error(f"Xatolik: {e}")
-        
-        if "admin_edit_data" in st.session_state and st.session_state["admin_edit_data"]:
-            edit_v = st.session_state["admin_edit_data"]
-            df_admin_edit = pd.DataFrame(edit_v[1:], columns=edit_v[0])
-            edited_admin_df = st.data_editor(df_admin_edit, num_rows="dynamic", use_container_width=True)
-            if st.button("💾 O'zgartirishlarni Saqlash", type="primary", key="save_admin_edit"):
-                try:
-                    ws_edit = get_or_create_spreadsheet(FLOOR_CONFIG[edit_f_id]["sheet_name"]).sheet1
-                    ws_edit.clear()
-                    ws_edit.update(values=[edited_admin_df.columns.tolist()] + edited_admin_df.fillna("").astype(str).values.tolist())
-                    st.success("✅ Ma'lumotlar muvaffaqiyatli saqlandi!")
-                    st.cache_data.clear()
-                except Exception as e: st.error(f"Xatolik: {e}")
-
-    if st.query_params.get("view_mode") != "user":
-        st.stop()
-
-# --- HEADER (User View) ---
-current_config = get_current_config()
-floor_name = current_config.get("name", "4-etaj")
-st.markdown(f"""
-<div style="background: var(--glass); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 20px; padding: 25px 40px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);">
-    <div>
-        <h1 style="margin: 0; font-size: 28px; background: linear-gradient(145deg, #ffffff, var(--primary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">🏢 Navbatchilik Tizimi</h1>
-        <p style="margin: 5px 0 0 0; color: #888; font-size: 14px;">TTJ Yotoqxona Boshqaruv Paneli</p>
-    </div>
-    <div style="display: flex; gap: 15px; align-items: center;">
-        <div style="background: var(--primary); padding: 10px 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 212, 170, 0.4); color: #0a0a0a; font-weight: bold;">
-            📍 {floor_name}
-        </div>
-        <a href="?action=logout" target="_self" style="text-decoration: none; background: rgba(255, 87, 51, 0.1); border: 1px solid #ff5733; color: #ff5733; padding: 10px 20px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px;">
-            <span>🚪 CHIQISH</span>
-        </a>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
 # --- 3D MENU CARDS ---
-a_val = st.query_params.get("auth", "")
-f_val = st.query_params.get("floor", "")
-r_val = st.query_params.get("role", "")
-p_str = f"auth={a_val}&floor={f_val}&role={r_val}"
+auth_ok = st.query_params.get("auth", "")
+floor_id = st.query_params.get("floor", "")
+role_type = st.query_params.get("role", "")
+base_params = f"auth={auth_ok}&floor={floor_id}&role={role_type}"
 
 st.markdown(f"""
 <div class="menu-container">
-    <a href="?menu=navbatchilik&{p_str}" target="_self" style="text-decoration: none;">
+    <a href="?menu=navbatchilik&{base_params}" target="_self" style="text-decoration: none;">
         <div class="menu-card {'active' if st.session_state.active_menu == 'navbatchilik' else ''}">
-            <span style="font-size: 48px;">📝</span>
+            <span class="menu-icon">📝</span>
             <div class="menu-title">Navbatchilik</div>
         </div>
     </a>
-    <a href="?menu=naryad&{p_str}" target="_self" style="text-decoration: none;">
+    <a href="?menu=naryad&{base_params}" target="_self" style="text-decoration: none;">
         <div class="menu-card {'active' if st.session_state.active_menu == 'naryad' else ''}">
-            <span style="font-size: 48px;">🛠️</span>
+            <span class="menu-icon">🛠️</span>
             <div class="menu-title">Naryad</div>
         </div>
     </a>
-    <a href="?menu=statistika&{p_str}" target="_self" style="text-decoration: none;">
+    <a href="?menu=statistika&{base_params}" target="_self" style="text-decoration: none;">
         <div class="menu-card {'active' if st.session_state.active_menu == 'statistika' else ''}">
-            <span style="font-size: 48px;">📊</span>
+            <span class="menu-icon">📊</span>
             <div class="menu-title">Statistika</div>
         </div>
     </a>
-    <a href="?menu=xabarlar&{p_str}" target="_self" style="text-decoration: none;">
+    <a href="?menu=xabarlar&{base_params}" target="_self" style="text-decoration: none;">
         <div class="menu-card {'active' if st.session_state.active_menu == 'xabarlar' else ''}">
-            <span style="font-size: 48px;">📨</span>
+            <span class="menu-icon">📨</span>
             <div class="menu-title">Xabarlar</div>
         </div>
     </a>
@@ -722,13 +1590,10 @@ if st.session_state.active_menu == "navbatchilik":
                 # 1. Asosiy Jadvalga yozish
                 headers = sheet.row_values(1)
                 if date_str not in headers:
-                    date_col_idx = len(headers) + 1
-                    # Ustunlar sonini tekshirish va kengaytirish
-                    if date_col_idx > sheet.col_count:
-                        sheet.add_cols(10)
-                    sheet.update_cell(1, date_col_idx, date_str)
-                else:
-                    date_col_idx = headers.index(date_str) + 1
+                    sheet.update_cell(1, len(headers) + 1, date_str)
+                    headers = sheet.row_values(1)
+                
+                date_col_idx = headers.index(date_str) + 1
                 queue_sheet = get_queue_sheet()
                 # Toshkent vaqti (UTC+5)
                 timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
@@ -909,13 +1774,10 @@ if st.session_state.active_menu == "naryad":
                 # 1. Asosiy Jadvalga yozish
                 headers = sheet.row_values(1)
                 if naryad_date_str not in headers:
-                    date_col_idx = len(headers) + 1
-                    # Ustunlar sonini tekshirish va kengaytirish
-                    if date_col_idx > sheet.col_count:
-                        sheet.add_cols(10)
-                    sheet.update_cell(1, date_col_idx, naryad_date_str)
-                else:
-                    date_col_idx = headers.index(naryad_date_str) + 1
+                    sheet.update_cell(1, len(headers) + 1, naryad_date_str)
+                    headers = sheet.row_values(1)
+                
+                date_col_idx = headers.index(naryad_date_str) + 1
                 queue_sheet = get_queue_sheet()
                 # Toshkent vaqti (UTC+5)
                 timestamp = (datetime.now() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
