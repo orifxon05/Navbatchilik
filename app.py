@@ -221,9 +221,10 @@ def get_queue_sheet():
     current_floor = get_current_floor()
     # Agar current_floor bo'lmasa yoki config bo'sh bo'lsa default
     try:
-        sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
+        f_config = load_floor_config()
+        sheet_name = f_config[current_floor]["sheet_name"]
     except:
-        sheet_name = GOOGLE_SHEET_NAME
+        sheet_name = "Navbatchilik_Jadvali"
 
     try:
         return client.open(sheet_name).worksheet("SMS_QUEUE")
@@ -364,7 +365,8 @@ def send_successful_login_alert():
     
     # Joriy etaj nomini olish
     floor = st.session_state.get("current_floor", "4-etaj")
-    floor_name = FLOOR_CONFIG.get(floor, {}).get("name", floor)
+    f_config_alert = load_floor_config()
+    floor_name = f_config_alert.get(floor, {}).get("name", floor)
     
     msg = f"""✅ TIZIMGA KIRISH
 
@@ -1259,28 +1261,6 @@ if st.session_state.get("is_admin", False):
                     st.error(f"Kutilmagan xatolik: {type(e).__name__} - {e}")
 
     st.stop() # Stop execution so admin sees only this panel
-
-
-
-
-
-
-
-def get_queue_sheet():
-    """SMS navbati - har bir etajning o'z Sheet'ida saqlanadi (alohida)"""
-    client = get_client()
-    # Joriy etajning Sheet nomini olish
-    current_floor = get_current_floor()
-    sheet_name = FLOOR_CONFIG[current_floor]["sheet_name"]
-    try:
-        return client.open(sheet_name).worksheet("SMS_QUEUE")
-    except:
-        # SMS_QUEUE sahifasi yo'q bo'lsa, yaratish
-        ws = client.open(sheet_name).add_worksheet(title="SMS_QUEUE", rows="500", cols="6")
-        ws.append_row(["TELEFON", "XABAR", "STATUS", "VAQT", "ISM"])
-        return ws
-
-
 
 
 
