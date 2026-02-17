@@ -1598,6 +1598,7 @@ if st.session_state.active_menu == "navbatchilik":
         else:
             try:
                 # 1. Asosiy Jadvalga yozish
+                sheet = get_main_sheet()
                 headers = sheet.row_values(1)
                 if date_str not in headers:
                     sheet.update_cell(1, len(headers) + 1, date_str)
@@ -1783,6 +1784,7 @@ if st.session_state.active_menu == "naryad":
         else:
             try:
                 # 1. Asosiy Jadvalga yozish
+                sheet = get_main_sheet()
                 headers = sheet.row_values(1)
                 if naryad_date_str not in headers:
                     sheet.update_cell(1, len(headers) + 1, naryad_date_str)
