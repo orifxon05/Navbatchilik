@@ -52,26 +52,34 @@ SETTINGS_WORKSHEET = "SETTINGS"  # Worksheet nomi
 
 @st.cache_data(ttl=600)  # 10 daqiqa kesh (Kvota tejash uchun)
 def load_floor_config():
-    """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash"""
+    """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash (get_all_values bilan)"""
     try:
         client = get_client()
         settings_sheet = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
-        data = settings_sheet.get_all_records()
+        all_data = settings_sheet.get_all_values()
+        
+        if len(all_data) < 2:
+            return get_default_config()
+            
+        header = [h.strip().lower() for h in all_data[0]]
+        rows = all_data[1:]
         
         config = {}
-        for row in data:
-            floor_id = row.get("floor_id", "").strip()
+        for row in rows:
+            # Row mapping
+            row_dict = dict(zip(header, row))
+            floor_id = row_dict.get("floor_id", "").strip()
             if floor_id:
                 config[floor_id] = {
-                    "name": row.get("name", ""),
-                    "password": row.get("password", ""),
-                    "sheet_name": row.get("sheet_name", ""),
-                    "telegram_group": row.get("telegram_group", "")
+                    "name": row_dict.get("name", ""),
+                    "password": str(row_dict.get("password", "")).strip(),
+                    "sheet_name": row_dict.get("sheet_name", ""),
+                    "telegram_group": str(row_dict.get("telegram_group", "")).strip()
                 }
         
         return config if config else get_default_config()
-    except:
-        # Agar SETTINGS sahifasi yo'q bo'lsa, default qiymatlar
+    except Exception as e:
+        # Xatolik bo'lsa default qaytaramiz (lekin log qilgan holda)
         return get_default_config()
 
 def get_default_config():
@@ -117,16 +125,15 @@ def init_settings_sheet():
         st.error(f"SETTINGS yaratishda xatolik: {e}")
         return False
 
-# FLOOR_CONFIG ni Google Sheets'dan yuklash
-FLOOR_CONFIG = load_floor_config()
-
 # Joriy etaj (session_state da saqlanadi)
 def get_current_floor():
-    return st.session_state.get("current_floor", list(FLOOR_CONFIG.keys())[0])
+    config = load_floor_config()
+    return st.session_state.get("current_floor", list(config.keys())[0])
 
 def get_current_config():
+    config = load_floor_config()
     floor = get_current_floor()
-    return FLOOR_CONFIG.get(floor, list(FLOOR_CONFIG.values())[0])
+    return config.get(floor, list(config.values())[0])
 
 TTJ_GROUP_ID = "-1002435484678"  # Default (4-etaj)
 
@@ -974,12 +981,12 @@ def check_password():
                 send_telegram_alert("🔧 ADMIN PANEL'ga kirish!")
                 st.rerun()
 
-            # --- DYNAMIC FLOOR LOGIN ---
+# --- DYNAMIC FLOOR LOGIN ---
             found_floor = None
-            for floor_id, config in FLOOR_CONFIG.items():
-                # Password from Google Sheet config
-                if config.get("password") and password_clean == str(config.get("password")):
-                    found_floor = floor_id
+            f_config_all = load_floor_config()
+            for f_id, f_conf in f_config_all.items():
+                if f_conf.get("password") and password_clean == str(f_conf.get("password")):
+                    found_floor = f_id
                     break
             
             if found_floor:
@@ -1029,8 +1036,9 @@ if st.session_state.get("is_admin", False):
             
     # Qavatlarga o'tish
     with st.expander("👁️ Qavat ko'rinishiga o'tish (Saytni ko'rish)"):
-        f_cols = st.columns(len(FLOOR_CONFIG))
-        for i, (f_id, f_conf) in enumerate(FLOOR_CONFIG.items()):
+        f_config_nav = load_floor_config()
+        f_cols = st.columns(len(f_config_nav))
+        for i, (f_id, f_conf) in enumerate(f_config_nav.items()):
             c_idx = i % 4 # Max 4 columns
             with f_cols[c_idx]:
                 if st.button(f"🏠 {f_conf['name']}", key=f"nav_to_{f_id}", use_container_width=True):
@@ -1109,12 +1117,13 @@ if st.session_state.get("is_admin", False):
         st.subheader("📤 Excel Fayl Yuklash")
         
         # Dropdown for selecting target floor
-        floor_options = list(FLOOR_CONFIG.keys())
+        f_config_upload = load_floor_config()
+        floor_options = list(f_config_upload.keys())
         target_floor_id = st.selectbox("Qaysi qavatga yuklash kerak?", floor_options, 
-                                     format_func=lambda x: FLOOR_CONFIG[x]["name"] if x in FLOOR_CONFIG else x)
+                                     format_func=lambda x: f_config_upload[x]["name"] if x in f_config_upload else x)
         
         if target_floor_id:
-            target_sheet_name = FLOOR_CONFIG[target_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
+            target_sheet_name = f_config_upload[target_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
             st.info(f"📝 Tanlangan Sheet: **{target_sheet_name}**")
             
             uploaded_file = st.file_uploader("Excel faylni yuklang", type=['xlsx', 'xls', 'csv'])
@@ -1158,13 +1167,14 @@ if st.session_state.get("is_admin", False):
         st.subheader("📝 Talabalar Ro'yxatini Tahrirlash")
         
         # Etaj tanlash
-        floor_options_edit = list(FLOOR_CONFIG.keys())
+        f_config_edit = load_floor_config()
+        floor_options_edit = list(f_config_edit.keys())
         edit_floor_id = st.selectbox("Tahrirlash uchun qavatni tanlang", floor_options_edit, 
-                                   format_func=lambda x: FLOOR_CONFIG[x]["name"] if x in FLOOR_CONFIG else x,
+                                   format_func=lambda x: f_config_edit[x]["name"] if x in f_config_edit else x,
                                    key="edit_floor_select")
         
         if edit_floor_id:
-            target_sheet_name = FLOOR_CONFIG[edit_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
+            target_sheet_name = f_config_edit[edit_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
             
             # Yuklash tugmasi
             if st.button("🔄 Ma'lumotlarni Yuklash", key="load_data_edit"):
