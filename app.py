@@ -87,7 +87,7 @@ def get_default_config():
             "name": "3-etaj (Qizlar)",
             "password": "3etaj",
             "sheet_name": "TTJ 3-etaj Navbatchilik",
-            "telegram_group": "-1002623014807"
+            "telegram_group": "-1003566186790"
         }
     }
 
@@ -110,7 +110,7 @@ def init_settings_sheet():
             ws.append_row(["4-etaj", "4-etaj (O'g'il bolalar)", "sheeyh", 
                           "Navbatchilik_Jadvali", "-1002435484678"])
             ws.append_row(["3-etaj", "3-etaj (Qizlar)", "3etaj", 
-                          "TTJ 3-etaj Navbatchilik", "-1002623014807"])
+                          "TTJ 3-etaj Navbatchilik", "-1003566186790"])
             
             return True
     except Exception as e:

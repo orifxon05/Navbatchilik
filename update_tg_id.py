@@ -8,7 +8,7 @@ client = gspread.authorize(creds)
 
 SETTINGS_SHEET_NAME = "Navbatchilik_Jadvali"
 SETTINGS_WORKSHEET = "SETTINGS"
-NEW_TG_ID = "-1002623014807"
+NEW_TG_ID = "-1003566186790"
 
 try:
     sheet = client.open(SETTINGS_SHEET_NAME).worksheet(SETTINGS_WORKSHEET)
