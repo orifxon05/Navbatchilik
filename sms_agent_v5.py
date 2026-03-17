@@ -37,8 +37,12 @@ except ImportError as e:
 # =============================================================================
 # SOZLAMALAR
 # =============================================================================
-# Etajlar konfiguratsiyasi - har biri o'z Sheet'ida
-FLOOR_SHEETS = {
+# Avtomatik ravishda SETTINGS dan yuklanadi
+SETTINGS_SHEET_NAME = "Navbatchilik_Jadvali"
+SETTINGS_WORKSHEET = "SETTINGS"
+
+# Default (zaxira) konfiguratsiya
+DEFAULT_FLOOR_SHEETS = {
     "4-etaj": "Navbatchilik_Jadvali",
     "3-etaj": "TTJ 3-etaj Navbatchilik"
 }
@@ -153,13 +157,44 @@ def get_google_client():
         log(f"Google Sheets ulanish xatosi: {e}", "ERROR")
         return None
 
+def load_floor_config(client):
+    """Google Sheets SETTINGS dan qavatlar konfiguratsiyasini yuklash"""
+    try:
+        log("Konfiguratsiya yuklanmoqda...")
+        settings_spreadsheet = client.open(SETTINGS_SHEET_NAME)
+        settings_sheet = settings_spreadsheet.worksheet(SETTINGS_WORKSHEET)
+        all_data = settings_sheet.get_all_values()
+        
+        if len(all_data) < 2:
+            return DEFAULT_FLOOR_SHEETS
+            
+        header = [h.strip().lower() for h in all_data[0]]
+        rows = all_data[1:]
+        
+        config = {}
+        for row in rows:
+            row_dict = dict(zip(header, row))
+            floor_id = row_dict.get("floor_id", "").strip()
+            sheet_name = row_dict.get("sheet_name", "").strip()
+            if floor_id and sheet_name:
+                config[floor_id] = sheet_name
+        
+        log(f"Yuklandi: {len(config)} ta qavat")
+        return config if config else DEFAULT_FLOOR_SHEETS
+    except Exception as e:
+        log(f"Konfiguratsiya yuklashda xato (Default ishlatiladi): {e}", "WARN")
+        return DEFAULT_FLOOR_SHEETS
+
 def process_sms_queue(client):
     """SMS navbatini qayta ishlash - barcha etajlarni tekshirish"""
     total_sent = 0
     total_errors = 0
     
+    # Dinamik ravishda qavatlarni yuklash
+    floor_sheets = load_floor_config(client)
+    
     # Har bir etajning SMS navbatini tekshirish
-    for floor_name, sheet_name in FLOOR_SHEETS.items():
+    for floor_name, sheet_name in floor_sheets.items():
         try:
             spreadsheet = client.open(sheet_name)
             
