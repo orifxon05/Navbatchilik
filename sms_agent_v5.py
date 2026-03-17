@@ -62,9 +62,15 @@ CHECK_INTERVAL = 15
 # =============================================================================
 
 def log(message, level="INFO"):
-    """Konsolga log yozish"""
+    """Konsolga chiroyli log yozish"""
     timestamp = time.strftime("%H:%M:%S")
-    print(f"[{timestamp}] [{level}] {message}")
+    emoji = "ℹ️"
+    if level == "OK": emoji = "✅"
+    elif level == "ERROR": emoji = "❌"
+    elif level == "WARN": emoji = "⚠️"
+    elif level == "SMS": emoji = "📩"
+    
+    print(f"[{timestamp}] {emoji} {message}")
 
 def send_telegram(message):
     """Telegramga xabar yuborish"""
@@ -258,8 +264,8 @@ def process_sms_queue(client):
             
             # Etaj bo'yicha yakuniy xabar
             if sent_count > 0 or error_count > 0:
-                log(f"{floor_name}: {sent_count} yuborildi, {error_count} xato")
-                send_telegram(f"📊 {floor_name}: {sent_count} ta SMS yuborildi, {error_count} ta xato")
+                log(f"{floor_name}: {sent_count} yuborildi, {error_count} xato", "OK")
+                send_telegram(f"📊 {floor_name}: {sent_count} ta SMS qayta ishlandi.")
             
             total_sent += sent_count
             total_errors += error_count
@@ -275,7 +281,7 @@ def process_sms_queue(client):
 # =============================================================================
 
 def main():
-    """Asosiy funksiya"""
+    """Asosiy funksiya - Bir marta ishlaydi va yopiladi"""
     
     # Wake lock (Termux uyquga ketmasligi uchun)
     try:
@@ -283,47 +289,45 @@ def main():
     except:
         pass
     
-    log("=" * 50)
-    log("SMS AGENT v5.0 ishga tushdi!")
-    log("=" * 50)
+    print("\n" + "="*50)
+    log("SMS AGENT v5.1 | SCANNER MODE", "OK")
+    print("="*50 + "\n")
     
-    # Telegram xabari
-    send_telegram("SMS Agent v5.0 ishga tushdi!")
+    try:
+        # Google Sheets ga ulanish
+        client = get_google_client()
+        
+        if not client:
+            log("Google Sheets ga ulanib bo'lmadi!", "ERROR")
+            return
+
+        # SMS navbatini tekshirish
+        sent, errors = process_sms_queue(client)
+        
+        if sent > 0 or errors > 0:
+            msg = f"✅ SMS AGENT: Jami {sent} ta SMS yuborildi."
+            if errors > 0:
+                msg += f" ({errors} xato)"
+            send_telegram(msg)
+            log(msg, "OK")
+        else:
+            log("Yuboriladigan yangi SMSlar topilmadi.", "INFO")
+
+    except Exception as e:
+        log(f"Kutilmagan xato: {e}", "ERROR")
+        send_telegram(f"⚠️ Agent xatosi: {e}")
+
+    print("\n" + "-"*50)
+    for i in range(5, 0, -1):
+        print(f"\r🚀 Dastur {i} soniyadan so'ng yopiladi...", end="")
+        time.sleep(1)
+    print("\n👋 Xayr!")
     
-    # Asosiy loop
-    while True:
-        try:
-            # Google Sheets ga ulanish
-            client = get_google_client()
-            
-            if not client:
-                log("Google Sheets ga ulanib bo'lmadi, qayta urinish...", "ERROR")
-                time.sleep(30)
-                continue
-            
-            # SMS navbatini tekshirish
-            result = process_sms_queue(client)
-            
-            if isinstance(result, tuple):
-                sent, errors = result
-                if sent > 0 or errors > 0:
-                    msg = f"Natija: {sent} yuborildi"
-                    if errors > 0:
-                        msg += f", {errors} xato"
-                    send_telegram(msg)
-                    log(msg)
-            
-            # Kutish
-            time.sleep(CHECK_INTERVAL)
-            
-        except KeyboardInterrupt:
-            log("Agent to'xtatildi (Ctrl+C)")
-            send_telegram("SMS Agent to'xtatildi")
-            break
-            
-        except Exception as e:
-            log(f"Xato: {e}", "ERROR")
-            time.sleep(30)
+    # Wake unlock
+    try:
+        os.system("termux-wake-unlock")
+    except:
+        pass
 
 # =============================================================================
 # ISHGA TUSHIRISH
