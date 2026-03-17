@@ -328,6 +328,8 @@ def main():
         os.system("termux-wake-unlock")
     except:
         pass
+    
+    sys.exit(0)
 
 # =============================================================================
 # ISHGA TUSHIRISH
