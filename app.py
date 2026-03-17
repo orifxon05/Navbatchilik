@@ -1128,7 +1128,7 @@ if st.session_state.get("is_admin", False):
             target_sheet_name = f_config_upload[target_floor_id].get("sheet_name", GOOGLE_SHEET_NAME)
             st.info(f"📝 Tanlangan Sheet: **{target_sheet_name}**")
             
-            uploaded_file = st.file_uploader("Excel faylni yuklang", type=['xlsx', 'xls', 'csv'])
+            uploaded_file = st.file_uploader("Excel faylni yuklang", type=['xlsx', 'xls', 'csv'], help="Tanlashda 'Fayllar' (Files) bo'limiga kiring")
             
             if uploaded_file:
                 try:
