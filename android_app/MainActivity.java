@@ -2,11 +2,14 @@ package com.navbatchilik.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.webkit.WebChromeClient;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -16,9 +19,11 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private ProgressBar progressBar;
+    private ValueCallback<Uri[]> uploadMessage;
+    private final static int FILECHOOSER_RESULTCODE = 1;
 
     // MUHIM: Bu yerga o'zingizning Streamlit URL ingizni yozing!
-    private static final String WEBSITE_URL = "https://your-app-name.streamlit.app";
+    private static final String WEBSITE_URL = "https://navbatchilik.streamlit.app";
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -46,7 +51,7 @@ public class MainActivity extends Activity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setAllowFileAccess(true);
 
-        // Progress bar
+        // Progress bar va Fayl tanlash
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -56,6 +61,24 @@ public class MainActivity extends Activity {
                 } else {
                     progressBar.setVisibility(View.VISIBLE);
                 }
+            }
+
+            // MUHIM: Fayl tanlash tugmasi bosilganda bu funksiya ishga tushadi
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (uploadMessage != null) {
+                    uploadMessage.onReceiveValue(null);
+                }
+                uploadMessage = filePathCallback;
+
+                Intent intent = fileChooserParams.createIntent();
+                try {
+                    startActivityForResult(intent, FILECHOOSER_RESULTCODE);
+                } catch (Exception e) {
+                    uploadMessage = null;
+                    return false;
+                }
+                return true;
             }
         });
 
@@ -70,6 +93,16 @@ public class MainActivity extends Activity {
 
         // Saytni yuklash
         webView.loadUrl(WEBSITE_URL);
+    }
+
+    // Fayl tanlab bo'lingach natijani qabul qilish
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILECHOOSER_RESULTCODE) {
+            if (uploadMessage == null) return;
+            uploadMessage.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+            uploadMessage = null;
+        }
     }
 
     // Orqaga tugmasi
