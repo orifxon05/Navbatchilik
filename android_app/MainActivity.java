@@ -2,6 +2,8 @@ package com.navbatchilik.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -15,6 +17,12 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ProgressBar;
 
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
 public class MainActivity extends Activity {
 
     private WebView webView;
@@ -22,7 +30,9 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> uploadMessage;
     private final static int FILECHOOSER_RESULTCODE = 1;
 
-    // MUHIM: Bu yerga o'zingizning Streamlit URL ingizni yozing!
+    // --- YANGILANISH SOZLAMALARI ---
+    private static final int CURRENT_VERSION_CODE = 14; // Hozirgi APK versiyasi
+    private static final String VERSION_JSON_URL = "https://raw.githubusercontent.com/orifxon05/Navbatchilik/main/version.json";
     private static final String WEBSITE_URL = "https://navbatchilik.streamlit.app";
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -30,7 +40,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Fullscreen rejim
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -42,35 +51,24 @@ public class MainActivity extends Activity {
         webView = findViewById(R.id.webview);
         progressBar = findViewById(R.id.progressbar);
 
-        // WebView sozlamalari
         WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);           // JavaScript yoqish
-        settings.setDomStorageEnabled(true);           // LocalStorage
-        settings.setLoadWithOverviewMode(true);        // Zoom
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setAllowFileAccess(true);
 
-        // Progress bar va Fayl tanlash
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
-                if (newProgress == 100) {
-                    progressBar.setVisibility(View.GONE);
-                } else {
-                    progressBar.setVisibility(View.VISIBLE);
-                }
+                progressBar.setVisibility(newProgress == 100 ? View.GONE : View.VISIBLE);
             }
 
-            // MUHIM: Fayl tanlash tugmasi bosilganda bu funksiya ishga tushadi
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
-                if (uploadMessage != null) {
-                    uploadMessage.onReceiveValue(null);
-                }
+                if (uploadMessage != null) uploadMessage.onReceiveValue(null);
                 uploadMessage = filePathCallback;
-
                 Intent intent = fileChooserParams.createIntent();
                 try {
                     startActivityForResult(intent, FILECHOOSER_RESULTCODE);
@@ -82,7 +80,6 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Linklar ichida ochilsin
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
@@ -91,11 +88,60 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Saytni yuklash
         webView.loadUrl(WEBSITE_URL);
+
+        // Yangilanishni tekshirish
+        checkForUpdates();
     }
 
-    // Fayl tanlab bo'lingach natijani qabul qilish
+    private void checkForUpdates() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    URL url = new URL(VERSION_JSON_URL);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder result = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) result.append(line);
+                    
+                    JSONObject json = new JSONObject(result.toString());
+                    final int latestVersionCode = json.getInt("versionCode");
+                    final String downloadUrl = json.getString("downloadUrl");
+                    final String releaseNotes = json.getString("releaseNotes");
+
+                    if (latestVersionCode > CURRENT_VERSION_CODE) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                showUpdateDialog(releaseNotes, downloadUrl);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    private void showUpdateDialog(String notes, final String url) {
+        new AlertDialog.Builder(this)
+                .setTitle("🚀 Yangi talqin tayyor!")
+                .setMessage(notes + "\n\nHozir yangilaysizmi?")
+                .setPositiveButton("Yangilash", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Intent i = new Intent(Intent.ACTION_VIEW);
+                        i.setData(Uri.parse(url));
+                        startActivity(i);
+                    }
+                })
+                .setNegativeButton("Keyinroq", null)
+                .show();
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == FILECHOOSER_RESULTCODE) {
@@ -105,13 +151,9 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Orqaga tugmasi
     @Override
     public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        if (webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 }
